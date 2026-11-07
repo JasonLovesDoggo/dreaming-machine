@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 from .os_sim import MicroOS, obs_to_pixels
 from .dataset import OBS_KEYS
-from .tiles import PAL
+from .tiles import PAL, CHARSET
 
 app = FastAPI()
 STATE = {}
@@ -24,25 +24,25 @@ canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;
 <div><div>NEURAL (world model, __NEURAL__)</div><canvas id="neural" width="256" height="192"></canvas></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
 <span id="info"></span></div>
-<p>Mouse on either screen. Keys: arrows (Doom move/turn, Explorer select), Space = fire, Enter, Esc = close window, Delete.</p>
+<p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
 <script>
 const PAL=__PAL__;
-const KEYS={ArrowUp:1,ArrowDown:2,ArrowLeft:3,ArrowRight:4," ":5,Control:5,Enter:6,Escape:7,Delete:8,Backspace:8};
-let mx=128,my=96,btn=0,key=0,held=[],cmd=null;
+const HELD={ArrowUp:1,ArrowDown:2,ArrowLeft:3,ArrowRight:4,Control:5};const QUEUED={Enter:6,Escape:7,Delete:8,Backspace:8};const CHARSET=__CHARSET__;
+let mx=128,my=96,btn=0,key=0,held=[],cmd=null,btnq=[],typed=[];
 const cv={real:document.getElementById('real'),neural:document.getElementById('neural')};
 for(const c of Object.values(cv)){
  c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();mx=Math.floor((e.clientX-r.left)/r.width*256);my=Math.floor((e.clientY-r.top)/r.height*192);});
- c.addEventListener('mousedown',e=>{btn=1;e.preventDefault();}); c.addEventListener('contextmenu',e=>e.preventDefault());}
-window.addEventListener('mouseup',()=>btn=0);
-window.addEventListener('keydown',e=>{if(KEYS[e.key]){e.preventDefault();if(!held.includes(KEYS[e.key]))held.push(KEYS[e.key]);}});
-window.addEventListener('keyup',e=>{held=held.filter(k=>k!==KEYS[e.key]);});
+ c.addEventListener('mousedown',e=>{btnq.push(1);e.preventDefault();}); c.addEventListener('contextmenu',e=>e.preventDefault());}
+window.addEventListener('mouseup',()=>btnq.push(0));
+window.addEventListener('keydown',e=>{if(HELD[e.key]){e.preventDefault();if(!held.includes(HELD[e.key]))held.push(HELD[e.key]);return;}if(QUEUED[e.key]){e.preventDefault();typed.push(QUEUED[e.key]);return;}if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){const i=CHARSET.indexOf(e.key.toUpperCase());if(i>=0){e.preventDefault();typed.push(9+i);}}});
+window.addEventListener('keyup',e=>{held=held.filter(k=>k!==HELD[e.key]);});
 document.getElementById('sync').onclick=()=>cmd='sync'; document.getElementById('reset').onclick=()=>cmd='reset';
 function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImageData(256,192);
  for(let i=0;i<256*192;i++){const p=PAL[bytes[off+i]];img.data[4*i]=p[0];img.data[4*i+1]=p[1];img.data[4*i+2]=p[2];img.data[4*i+3]=255;}
  ctx.putImageData(img,0,0);}
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+location.pathname.replace(/\\/$/,'')+'/ws');
 ws.binaryType='arraybuffer'; let t0=performance.now();
-function send(){const k=held.length?held[held.length-1]:0;ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd}));cmd=null;}
+function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd}));cmd=null;}
 ws.onopen=send;
 ws.onmessage=e=>{const b=new Uint8Array(e.data);draw(cv.real,b,0);if(b.length>49152)draw(cv.neural,b,49152);
  const dt=performance.now()-t0;t0=performance.now();document.getElementById('info').textContent=` ${(1000/dt).toFixed(1)} fps`;
@@ -82,7 +82,7 @@ class Neural:
 
 @app.get('/')
 def index():
-    page = PAGE.replace('__PAL__', json.dumps(PAL.tolist()))
+    page = PAGE.replace('__PAL__', json.dumps(PAL.tolist())).replace('__CHARSET__', json.dumps(CHARSET))
     return HTMLResponse(page.replace('__NEURAL__', 'loaded' if STATE.get('neural') else 'no checkpoint'))
 
 

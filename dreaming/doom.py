@@ -23,6 +23,7 @@ GRID = np.array([[{'.': 0, '#': 1, 'B': 2, 'T': 3}[c] for c in row] for row in M
 NANG = 48
 SPAWNS = [(12.5, 4.5), (5.5, 9.5), (13.5, 9.5)]
 START = (2.5, 2.5, 0)
+CAM = 2 * (np.arange(160) + 0.5) / 160 - 1
 
 
 def _textures():
@@ -89,8 +90,7 @@ class Doom:
             self.ammo -= 1
             self.flash = 2
             events.append('doom_fire')
-            cols = self.raycast()
-            center_wall = cols[VW // 2][4]
+            center_wall = self.raycast()[4][VW // 2]
             best = None
             for imp, (sx, size, depth) in zip(self.imps, self._project_all()):
                 if imp['state'] != 2 and depth > 0 and abs(sx - VW // 2) < max(3, size // 4) and depth < center_wall:
@@ -135,35 +135,37 @@ class Doom:
         return events
 
     def raycast(self):
+        """Returns (wtype, side, h, u, dist) arrays over the VW screen columns. Cached per pose."""
+        key = (self.px, self.py, self.ang)
+        if getattr(self, '_rc_key', None) == key:
+            return self._rc
         dx, dy = self._dir()
-        pl = 0.66
-        cam = 2 * (np.arange(VW) + 0.5) / VW - 1
-        rdx, rdy = dx - dy * pl * cam, dy + dx * pl * cam
+        cam = CAM
+        rdx, rdy = dx - dy * 0.66 * cam, dy + dx * 0.66 * cam
         mx = np.full(VW, int(self.px)); my = np.full(VW, int(self.py))
         with np.errstate(divide='ignore'):
             ddx = np.where(rdx == 0, 1e9, np.abs(1 / rdx)); ddy = np.where(rdy == 0, 1e9, np.abs(1 / rdy))
         sx = np.where(rdx < 0, -1, 1); sy = np.where(rdy < 0, -1, 1)
         sdx = np.where(rdx < 0, (self.px - mx) * ddx, (mx + 1 - self.px) * ddx)
         sdy = np.where(rdy < 0, (self.py - my) * ddy, (my + 1 - self.py) * ddy)
-        hit = np.zeros(VW, bool); side = np.zeros(VW, np.int8); wtype = np.zeros(VW, np.int8)
-        for _ in range(64):
-            go_x = (sdx < sdy) & ~hit
-            go_y = ~(sdx < sdy) & ~hit
-            sdx = np.where(go_x, sdx + ddx, sdx); mx = np.where(go_x, mx + sx, mx)
-            sdy = np.where(go_y, sdy + ddy, sdy); my = np.where(go_y, my + sy, my)
-            side = np.where(go_x, 0, np.where(go_y, 1, side))
-            cell = GRID[np.clip(my, 0, GRID.shape[0] - 1), np.clip(mx, 0, GRID.shape[1] - 1)]
-            newhit = (cell > 0) & ~hit
-            wtype = np.where(newhit, cell, wtype)
-            hit |= newhit
-            if hit.all():
-                break
-        dist = np.where(side == 0, sdx - ddx, sdy - ddy)
-        dist = np.maximum(dist, 1e-3)
+        side = np.zeros(VW, np.int64); wtype = np.zeros(VW, np.int64)
+        active = np.arange(VW)
+        while active.size:
+            a_sdx, a_sdy = sdx[active], sdy[active]
+            gx = a_sdx < a_sdy
+            ix, iy = active[gx], active[~gx]
+            sdx[ix] += ddx[ix]; mx[ix] += sx[ix]; side[ix] = 0
+            sdy[iy] += ddy[iy]; my[iy] += sy[iy]; side[iy] = 1
+            cell = GRID[my[active], mx[active]]
+            hit = cell > 0
+            wtype[active[hit]] = cell[hit]
+            active = active[~hit]
+        dist = np.maximum(np.where(side == 0, sdx - ddx, sdy - ddy), 1e-3)
         wallx = np.where(side == 0, self.py + dist * rdy, self.px + dist * rdx)
-        u = ((wallx - np.floor(wallx)) * 16).astype(int).clip(0, 15)
-        h = np.minimum(255, (VH / dist).astype(int))
-        return [(int(wtype[i]), int(side[i]), int(h[i]), int(u[i]), float(dist[i])) for i in range(VW)]
+        u = ((wallx - np.floor(wallx)) * 16).astype(np.int64).clip(0, 15)
+        h = np.minimum(255, (VH / dist).astype(np.int64))
+        self._rc_key, self._rc = key, (wtype, side, h, u, dist)
+        return self._rc
 
     def _project_all(self):
         dx, dy = self._dir()
@@ -183,8 +185,8 @@ class Doom:
         return out
 
     def tokens(self):
-        cols = self.raycast()
-        colarr = np.array([[c[0], c[1], c[2], c[3]] for c in cols], np.uint8)
+        wt, sd, h, u, _ = self.raycast()
+        colarr = np.stack([wt, sd, h, u], 1).astype(np.uint8)
         spr = []
         for imp, (sx, size, depth) in zip(self.imps, self._project_all()):
             if depth > 0 and -size // 2 < sx < VW + size // 2:
@@ -205,46 +207,57 @@ class Doom:
 
 GUN = ["....kk....", "...kggk...", "...kggk...", "..kggggk..", "..kgddgk..", ".kggddggk.", ".kggggggk.", "kkkkkkkkkk"]
 _yy, _xx = np.mgrid[0:VH, 0:VW]
+_BG = np.where(_yy < VH // 2, K, DGRAY).astype(np.uint8)
+
+
+def _gun_layers():
+    gs = 3
+    gx, gy = VW // 2 - len(GUN[0]) * gs // 2, VH - len(GUN) * gs
+    col = np.zeros((VH, VW), np.uint8); mask = np.zeros((VH, VW), bool)
+    for y, row in enumerate(GUN):
+        for x, ch in enumerate(row):
+            if ch != '.':
+                col[gy + y * gs:gy + (y + 1) * gs, gx + x * gs:gx + (x + 1) * gs] = {'k': K, 'g': LGRAY, 'd': DGRAY}[ch]
+                mask[gy + y * gs:gy + (y + 1) * gs, gx + x * gs:gx + (x + 1) * gs] = True
+    fcol = np.zeros((VH, VW), np.uint8); fmask = np.zeros((VH, VW), bool)
+    fcol[gy - 12:gy, VW // 2 - 6:VW // 2 + 6] = YELLOW; fmask[gy - 12:gy, VW // 2 - 6:VW // 2 + 6] = True
+    fcol[gy - 8:gy - 2, VW // 2 - 3:VW // 2 + 3] = WHITE
+    return col, mask, fcol, fmask
+
+
+_GUN_COL, _GUN_MASK, _FLASH_COL, _FLASH_MASK = _gun_layers()
 
 
 def render_tokens(cols, sprites, gun):
     """cols (160,4) [type, side, height, u]; sprites (4,3) [kind, x+32, size]; gun 0/1 -> (120,160) palette px."""
-    img = np.where(_yy < VH // 2, K, DGRAY).astype(np.uint8)
-    img[VH // 2 + 18:] = DGRAY
-    wt, sd, h, u = [cols[:, i].astype(int) for i in range(4)]
+    wt, sd, h, u = [cols[:, i].astype(np.int64) for i in range(4)]
     hh = np.maximum(h, 1)
     top = (VH - hh) / 2
-    v = ((_yy - top[None, :]) / hh[None, :] * 16).astype(int)
-    inside = (_yy >= top[None, :]) & (_yy < (top + hh)[None, :]) & (wt[None, :] > 0)
-    texel = TEX[wt[None, :], sd[None, :], np.clip(v, 0, 15), u[None, :]]
-    img = np.where(inside, texel, img)
+    v = ((_yy - top) / hh * 16).astype(np.int64)
+    inside = (_yy >= top) & (_yy < top + hh) & (wt > 0)
+    img = np.where(inside, TEX[wt, sd, np.clip(v, 0, 15), u], _BG)
     for kind, sx, size in sprites:
+        kind, sx, size = int(kind), int(sx) - 32, int(size)
         if kind == 0 or size == 0:
             continue
-        sx = int(sx) - 32
-        size = int(size)
-        rx = (_xx - sx) / (size / 2 + 1e-6)
-        ry = (_yy - VH // 2) / (size / 2 + 1e-6)
-        vis = (h < size)[None, :]
+        x0, x1 = max(0, sx - size), min(VW, sx + size + 1)
+        y0, y1 = max(0, VH // 2 - size), min(VH, VH // 2 + size + 1)
+        if x0 >= x1 or y0 >= y1:
+            continue
+        sub = img[y0:y1, x0:x1]
+        rx = (_xx[y0:y1, x0:x1] - sx) / (size / 2 + 1e-6)
+        ry = (_yy[y0:y1, x0:x1] - VH // 2) / (size / 2 + 1e-6)
+        vis = (h[x0:x1] < size)[None, :]
         if kind == 3:
-            body = (rx * rx * 0.6 + (ry - 0.8) ** 2 * 20 < 0.5)
-            img = np.where(body & vis, DRED, img)
+            sub[(rx * rx * 0.6 + (ry - 0.8) ** 2 * 20 < 0.5) & vis] = DRED
             continue
         body = (rx * rx * 1.4 + ry * ry < 0.75) | ((np.abs(rx) < 0.25) & (ry > 0.4) & (ry < 0.95)) | \
                ((np.abs(rx) > 0.4) & (np.abs(rx) < 0.6) & (ry < -0.5) & (ry > -0.85))
         col = np.where(ry > -0.5, ORANGE if kind == 1 else WHITE, DRED)
-        img = np.where(body & vis, col, img)
-        eyes = (np.abs(np.abs(rx) - 0.28) < 0.1) & (np.abs(ry + 0.15) < 0.1)
-        img = np.where(eyes & vis, YELLOW if kind == 1 else RED, img)
-        mouth = (np.abs(rx) < 0.35) & (np.abs(ry - 0.25) < 0.05)
-        img = np.where(mouth & vis, K, img)
-    gs = 3
-    gx, gy = VW // 2 - len(GUN[0]) * gs // 2, VH - len(GUN) * gs
+        m = body & vis
+        sub[m] = col[m]
+        sub[(np.abs(np.abs(rx) - 0.28) < 0.1) & (np.abs(ry + 0.15) < 0.1) & vis] = YELLOW if kind == 1 else RED
+        sub[(np.abs(rx) < 0.35) & (np.abs(ry - 0.25) < 0.05) & vis] = K
     if gun:
-        img[gy - 12:gy, VW // 2 - 6:VW // 2 + 6] = YELLOW
-        img[gy - 8:gy - 2, VW // 2 - 3:VW // 2 + 3] = WHITE
-    for y, row in enumerate(GUN):
-        for x, ch in enumerate(row):
-            if ch != '.':
-                img[gy + y * gs:gy + (y + 1) * gs, gx + x * gs:gx + (x + 1) * gs] = {'k': K, 'g': LGRAY, 'd': DGRAY}[ch]
-    return img
+        img = np.where(_FLASH_MASK, _FLASH_COL, img)
+    return np.where(_GUN_MASK, _GUN_COL, img).astype(np.uint8)

@@ -35,9 +35,9 @@ FONT3 = {
     '.': ["...", "...", "...", "...", ".#."], ':': ["...", ".#.", "...", ".#.", "..."],
     '-': ["...", "...", "###", "...", "..."], '/': ["..#", "..#", ".#.", "#..", "#.."],
     '>': ["#..", ".#.", "..#", ".#.", "#.."], '!': [".#.", ".#.", ".#.", "...", ".#."],
-    ' ': ["...", "...", "...", "...", "..."],
+    ' ': ["...", "...", "...", "...", "..."], '_': ["...", "...", "...", "...", "###"],
 }
-CHARSET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-/>!"
+CHARSET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-/>!_"
 CHAR_IDX = {c: i for i, c in enumerate(CHARSET)}
 NCH = len(CHARSET)
 GLYPHS = np.array([[[c == '#' for c in row] for row in FONT3[ch]] for ch in CHARSET], bool)
@@ -74,6 +74,9 @@ ICON_ART = {
     'cards': ["................", "...kkkkkkkkkk..."] + ["...k" + r + "k..." for r in
               ["wwwwwwww", "wrwwwwww", "wwwwwwww", "wwrrwrrw", "wrrrrrrr", "wrrrrrrr", "wwrrrrrw", "wwwrrrww", "wwwwrwww",
                "wwwwwwww", "wwwwwwrw", "wwwwwwww"]] + ["...kkkkkkkkkk...", "................"],
+    'notepad': ["................", "..kkkkkkkkkkk...", "..kwwwwwwwwwkk..", "..kwddddddwwkwk.", "..kwwwwwwwwwkkkk",
+                "..kwdddddddwwwk.", "..kwwwwwwwwwwwk.", "..kwddddddddwwk.", "..kwwwwwwwwwwwk.", "..kwdddddwwwwwk.",
+                "..kwwwwwwwwwwwk.", "..kwddddddddwwk.", "..kwwwwwwwwwwwk.", "..kkkkkkkkkkkkk.", "................", "................"],
     'doom': ["................", ".rrrrrrrrrrrrrr.", ".rrrrwwwwwwrrrr.", ".rrrwwwwwwwwrrr.", ".rrwwwwwwwwwwrr.",
              ".rrwwkkwwkkwwrr.", ".rrwwkkwwkkwwrr.", ".rrwwwwwwwwwwrr.", ".rrrwwwkkwwwrrr.", ".rrrrwwwwwwrrrr.",
              ".rrrrwkwkwkrrrr.", ".rrrrwwwwwwrrrr.", ".rrrrrrrrrrrrrr.", "................", "................", "................"],

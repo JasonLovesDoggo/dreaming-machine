@@ -1,18 +1,23 @@
 """Deterministic tile-based micro OS. step(action) -> observation (tile grid + cursor + doom tokens + state)."""
 import random
+from functools import lru_cache
 import numpy as np
-from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, grid_to_pixels, draw_cursor, RANKS)
+from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, grid_to_pixels, draw_cursor, RANKS,
+                    NCH, CHARSET)
 from . import doom as dm
 
-APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18)}
+APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13)}
 APPS = list(APP_SIZES)
-APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM'}
-DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3)}
+APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM', 'notepad': 'NOTEPAD'}
+DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6)}
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
-NKEYS = 9
+KEY_CHAR0 = 9  # typed characters: KEY_CHAR0 + index into CHARSET (space = 9)
+NKEYS = KEY_CHAR0 + NCH
+NP_COLS, NP_ROWS, NP_MAX = 32, 10, 600
 DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('explorer', 'TRASH')),
               ('picture', 'PICS', ('explorer', 'C:/PICS')), ('paint', 'PAINT', ('paint', None)),
-              ('cards', 'CARDS', ('cards', None)), ('doom', 'DOOM', ('doom', None))]
+              ('cards', 'CARDS', ('cards', None)), ('doom', 'DOOM', ('doom', None)),
+              ('notepad', 'NOTES', ('notepad', None))]
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
@@ -20,7 +25,7 @@ TASKBAR_BTN_W = 5
 
 
 def icon_pos(i):
-    return 1 + 4 * (i % 3), (1 if i < 3 else 5)  # (row, col)
+    return 1 + 4 * (i % 3), 1 + 4 * (i // 3)  # (row, col)
 
 
 def make_picture(name):
@@ -77,9 +82,17 @@ class MicroOS:
         self.origin = {'OLD.TXT': 'C:/DOCS'}
         self.pictures = {n: make_picture(n) for n, k in self.fs['C:/PICS']}
         self.new_pic = 1
+        self.texts = {
+            'README.TXT': 'WELCOME TO DREAMING MACHINE!\nDOUBLE CLICK AN ICON TO OPEN IT.\nDRAG WINDOWS BY THEIR TITLE BAR.',
+            'NOTES.TXT': 'MEETING NOTES\n- SHIP THE WORLD MODEL\n- TRAIN ON MODAL\n- PLAY DOOM INSIDE A DREAM',
+            'TODO.TXT': 'TODO:\n1. CLEAN DESKTOP\n2. WIN SOLITAIRE\n3. DRAW A CAT',
+            'BUDGET.TXT': 'BUDGET 2026\nGPUS: 500\nSNACKS: 20\nTOTAL: 520',
+            'OLD.TXT': 'THIS FILE IS OLD.\nYOU CAN EMPTY THE TRASH.',
+        }
+        self.new_doc = 1
         self.deal_no = 0
         self.doom = dm.Doom()
-        self._reset_app('explorer'); self._reset_app('paint'); self._reset_app('cards')
+        self._reset_app('explorer'); self._reset_app('paint'); self._reset_app('cards'); self._reset_app('notepad')
         return self.observe([])
 
     def _reset_app(self, app, arg=None):
@@ -103,6 +116,10 @@ class MicroOS:
                 self.tab.append(col)
             self.stock, self.waste, self.found = deck, [], [[] for _ in range(4)]
             self.c_sel, self.c_won = None, False
+            self.c_press, self.c_grab, self.c_dragging = None, (0, 0), False
+        elif app == 'notepad':
+            self.np_file = arg
+            self.np_text = self.texts.get(arg, '') if arg else ''
         elif app == 'doom':
             self.doom.reset()
 
@@ -116,8 +133,8 @@ class MicroOS:
             self.raise_app(app)
             if app == 'explorer' and arg:
                 self.ex_path, self.ex_sel = arg, -1
-            if app == 'paint' and arg:
-                self._reset_app('paint', arg)
+            if app in ('paint', 'notepad') and arg:
+                self._reset_app(app, arg)
         else:
             self._reset_app(app, arg)
             self.pos[app] = DEFAULT_POS[app]
@@ -132,8 +149,10 @@ class MicroOS:
     def close_app(self, app, events):
         self.z.remove(app)
         self.pos.pop(app, None)
-        if app == 'paint':
-            self._reset_app('paint')
+        if app in ('paint', 'notepad'):
+            self._reset_app(app)
+        if app == 'cards':
+            self.c_press, self.c_dragging = None, False
         events.append('close_' + app)
 
     # ------------------------------------------------------------------ input
@@ -159,16 +178,25 @@ class MicroOS:
             self._press(mx, my, dbl, events)
         if btn and not press and self.pt_drawing and self.focus == 'paint':
             self._paint_at(mx, my, events, cont=True)
+        if btn and not press and self.c_press and self.focus == 'cards' and not self.c_dragging:
+            if abs(mx - self.c_press[0]) + abs(my - self.c_press[1]) >= 4:
+                self.c_dragging = True
+                events.append('cards_drag')
         if release:
             if self.drag:
                 events.append('drag_end')
             self.drag = None
             self.pt_drawing = False
+            if self.c_dragging and 'cards' in self.z and self.c_sel:
+                self._cards_drop(mx, my, events)
+                self.c_sel = None
+            self.c_press, self.c_dragging = None, False
         if key:
             self._key(key, events)
         if self.focus == 'doom':
             fire = press and self._in_doom_view(mx, my)
-            events += self.doom.step(key if key in (1, 2, 3, 4, 5) else 0, fire)
+            dkey = key if key in (1, 2, 3, 4, 5) else (KEY_FIRE if key == KEY_CHAR0 else 0)
+            events += self.doom.step(dkey, fire)
         self.btn = btn
         self.t += 1
         return self.observe(events)
@@ -222,6 +250,16 @@ class MicroOS:
         app = self.focus
         if key == KEY_ESC and app:
             self.close_app(app, events)
+        elif app == 'notepad':
+            if key >= KEY_CHAR0 and len(self.np_text) < NP_MAX:
+                self.np_text += CHARSET[key - KEY_CHAR0]
+                events.append('np_type')
+            elif key == KEY_ENTER and len(self.np_text) < NP_MAX and len(self._np_lines(self.np_text)) < 40:
+                self.np_text += '\n'
+                events.append('np_newline')
+            elif key == KEY_DEL and self.np_text:
+                self.np_text = self.np_text[:-1]
+                events.append('np_backspace')
         elif app == 'explorer':
             items = self.fs[self.ex_path]
             if key == KEY_DOWN and items:
@@ -278,6 +316,9 @@ class MicroOS:
         elif kind == 'exe':
             self.open_app(name[:-4].lower(), None, events)
             events.append('ex_open_exe')
+        elif kind == 'txt':
+            self.open_app('notepad', name, events)
+            events.append('ex_open_txt')
 
     def _ex_delete(self, events):
         items = self.fs[self.ex_path]
@@ -290,6 +331,7 @@ class MicroOS:
         if self.ex_path == 'TRASH':
             self.origin.pop(name, None)
             self.pictures.pop(name, None)
+            self.texts.pop(name, None)
             events.append('ex_delete_forever')
         else:
             if len(self.fs['TRASH']) >= 9:
@@ -299,6 +341,8 @@ class MicroOS:
             events.append('ex_delete')
             if self.pt_file == name:
                 self.pt_file = None
+            if self.np_file == name:
+                self.np_file = None
         self.ex_sel = min(self.ex_sel, len(items) - 1)
 
     def _ex_restore(self, events):
@@ -357,6 +401,28 @@ class MicroOS:
         self.pictures[self.pt_file] = self.pt_canvas.copy()
         events.append('paint_save')
 
+    # ------------------------------------------------------------------ notepad
+    @staticmethod
+    def _np_lines(text):
+        out = []
+        for line in text.split('\n'):
+            out += [line[i:i + NP_COLS] for i in range(0, max(len(line), 1), NP_COLS)]
+        return out
+
+    def _press_notepad(self, mx, my, lc, lr, dbl, events):
+        if lr == 1 and lc in (1, 2):
+            self.np_text, self.np_file = '', None
+            events.append('np_new')
+        elif lr == 1 and lc in (4, 5):
+            if self.np_file is None:
+                if len(self.fs['C:/DOCS']) >= 9:
+                    return
+                self.np_file = f'DOC{self.new_doc}.TXT'
+                self.new_doc += 1
+                self.fs['C:/DOCS'].append((self.np_file, 'txt'))
+            self.texts[self.np_file] = self.np_text
+            events.append('np_save')
+
     # ------------------------------------------------------------------ cards
     def _tab_visible(self, k):
         n = len(self.tab[k])
@@ -382,6 +448,8 @@ class MicroOS:
                 if dbl and self._auto_found(('waste',), events):
                     return
                 self.c_sel = ('waste',)
+                wc, wr = self.pos['cards']
+                self.c_press, self.c_grab = (mx, my), (mx - (wc + 4) * T, my - (wr + 2) * T)
                 events.append('cards_select')
                 return
             for f in range(4):
@@ -393,11 +461,11 @@ class MicroOS:
         if lr >= 6:
             for k in range(7):
                 if lc in (1 + 3 * k, 2 + 3 * k):
-                    self._press_tab(k, lr - 6, dbl, events)
+                    self._press_tab(k, lr - 6, dbl, events, mx, my)
                     return
         self.c_sel = None
 
-    def _press_tab(self, k, rr, dbl, events):
+    def _press_tab(self, k, rr, dbl, events, mx=0, my=0):
         col = self.tab[k]
         off, n = self._tab_visible(k)
         if n == 0:
@@ -422,7 +490,19 @@ class MicroOS:
         if dbl and j == n - 1 and self._auto_found(('tab', k, j), events):
             return
         self.c_sel = ('tab', k, j)
+        wc, wr = self.pos['cards']
+        self.c_press, self.c_grab = (mx, my), (mx - (wc + 1 + 3 * k) * T, my - (wr + 6 + j - off) * T)
         events.append('cards_select')
+
+    def _cards_drop(self, mx, my, events):
+        wc, wr = self.pos['cards']
+        lc, lr = mx // T - wc, my // T - wr
+        if 1 <= lr <= 4 and 10 <= lc <= 21:
+            ok = self._move_to_found(self.c_sel, min((lc - 10) // 3, 3), events)
+            if not ok:
+                events.append('cards_illegal')
+        elif lr >= 5 and 1 <= lc <= 21:
+            self._move_to_tab(self.c_sel, min((lc - 1) // 3, 6), events)
 
     def _sel_cards(self, sel):
         if sel[0] == 'waste':
@@ -566,8 +646,12 @@ class MicroOS:
                     place_card(g, wr + 2, wc + 10 + 3 * f, self.found[f][-1], False)
                 else:
                     place_slot(g, wr + 2, wc + 10 + 3 * f)
+            drag = self.c_dragging and sel is not None
             for k in range(7):
                 off, n = self._tab_visible(k)
+                if drag and sel[0] == 'tab' and sel[1] == k:
+                    n = sel[2]
+                    off = max(0, n - 11)
                 if n == 0:
                     place_slot(g, wr + 6, wc + 1 + 3 * k)
                 for vi, j in enumerate(range(off, n)):
@@ -578,12 +662,33 @@ class MicroOS:
                         place_card(g, wr + 6 + vi, wc + 1 + 3 * k, card, is_sel, covered)
                     else:
                         place_back(g, wr + 6 + vi, wc + 1 + 3 * k, covered)
+            if drag and sel[0] == 'waste':
+                if len(self.waste) > 1:
+                    place_card(g, wr + 2, wc + 4, self.waste[-2], False)
+                else:
+                    place_slot(g, wr + 2, wc + 4)
             if self.c_won:
                 put_text(g, wr + 10, wc + 8, ' YOU WIN! ', 'title')
+            if drag:
+                cards = self._sel_cards(sel)
+                gc = round((self.mx - self.c_grab[0]) / T)
+                gr = round((self.my - self.c_grab[1]) / T)
+                tmp = np.full((len(cards) + 2, 2), -1, np.int32)
+                for i, card in enumerate(cards):
+                    place_card(tmp, i, 0, card, True, covered=i < len(cards) - 1)
+                for (rr, cc), v in np.ndenumerate(tmp):
+                    if v >= 0 and 0 <= gr + rr < GH - 1 and 0 <= gc + cc < GW:
+                        g[gr + rr, gc + cc] = v
         elif app == 'doom':
             wc, wr, w, h = self._frame(g, app, 'DOOM', 'body')
             g[wr + 1:wr + 16, wc + 1:wc + 21] = ATLAS[('doom_view',)]
             put_text(g, wr + 16, wc + 1, self.doom.hud_text().center(40), 'hud')
+        elif app == 'notepad':
+            wc, wr, w, h = self._frame(g, app, 'NOTEPAD' + (' - ' + self.np_file if self.np_file else ''), 'body')
+            self._toolbar(g, wc, wr, w, [(1, 'NEW'), (4, 'SAVE')])
+            lines = self._np_lines(self.np_text + '_')[-NP_ROWS:]
+            for i, line in enumerate(lines):
+                put_text(g, wr + 2 + i, wc + 1, line.ljust(NP_COLS), 'body')
 
     # ------------------------------------------------------------------ observation
     def observe(self, events):
@@ -611,19 +716,27 @@ class MicroOS:
         f += [self.pt_color, int(self.pt_file is not None), int(self.pt_drawing)]
         sk = 0 if self.c_sel is None else (1 if self.c_sel[0] == 'waste' else 2)
         f += [len(self.stock) // 2, len(self.waste) // 2] + [len(x) for x in self.found] + [sk, self.deal_no % 8]
+        f += [int(self.c_dragging), min(len(self.np_text) // 16, 31), int(self.np_file is not None)]
         f += self.doom.state_fields() if 'doom' in self.z else [0] * 6
         return np.array(f, np.uint8)
 
 
-STATE_VOCAB = [2, 32, 24] * 4 + [5, 2, 2, 10, 7, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 16, 12, 16, 11, 11, 10]
+STATE_VOCAB = [2, 32, 24] * 5 + [6, 2, 2, 10, 8, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
+                                 16, 12, 16, 11, 11, 10]
+
+
+@lru_cache(maxsize=65536)
+def text_ids(s, ctx):
+    if len(s) % 2:
+        s += ' '
+    return np.array([text_id(ctx, s[i], s[i + 1]) for i in range(0, len(s), 2)], np.int32)
 
 
 def put_text(g, r, c, s, ctx):
-    if len(s) % 2:
-        s += ' '
-    for i in range(0, len(s), 2):
-        if 0 <= c + i // 2 < GW:
-            g[r, c + i // 2] = text_id(ctx, s[i], s[i + 1])
+    ids = text_ids(s, ctx)
+    a, b = max(c, 0), min(c + len(ids), GW)
+    if a < b:
+        g[r, a:b] = ids[a - c:b - c]
 
 
 def place_card(g, r, c, card, sel, covered=False):
@@ -661,10 +774,16 @@ def obs_to_pixels(obs, cursor=True):
         dimg = dm.render_tokens(obs['doom_cols'], obs['doom_spr'], int(meta[0]) - 1)
         vc, vr = int(meta[1]), int(meta[2])
         mask = grid == ATLAS[('doom_view',)]
-        for r, c in zip(*np.nonzero(mask)):
-            lr, lc = r - vr, c - vc
-            if 0 <= lr < 15 and 0 <= lc < 20:
-                px[r * T:(r + 1) * T, c * T:(c + 1) * T] = dimg[lr * T:(lr + 1) * T, lc * T:(lc + 1) * T]
+        if mask.any():
+            layer = np.zeros_like(px)
+            y0, x0 = vr * T, vc * T
+            h, w = min(dimg.shape[0], px.shape[0] - y0), min(dimg.shape[1], px.shape[1] - x0)
+            if h > 0 and w > 0:
+                layer[y0:y0 + h, x0:x0 + w] = dimg[:h, :w]
+                inview = np.zeros_like(mask)
+                inview[vr:vr + 15, vc:vc + 20] = True
+                pm = (mask & inview).repeat(T, 0).repeat(T, 1)
+                px = np.where(pm, layer, px)
     if cursor:
         draw_cursor(px, int(obs['cursor'][0]), int(obs['cursor'][1]))
     return px

@@ -3,7 +3,8 @@ import math
 import random
 from collections import Counter
 from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, KEY_UP, KEY_DOWN,
-                     KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS)
+                     KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
+from .tiles import CHARSET, CHAR_IDX
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
 
@@ -13,9 +14,14 @@ TASK_EVENTS = {
     'cards': ['cards_move', 'cards_found', 'cards_flip', 'cards_draw'],
     'doom': ['doom_fire', 'doom_kill', 'doom_hurt'],
     'windows': ['drag_move', 'close_explorer', 'close_paint', 'close_cards', 'close_doom', 'taskbar_focus'],
+    'notepad': ['np_type', 'np_save', 'np_new', 'np_backspace', 'ex_open_txt'],
     'noise': ['desk_select'],
 }
-BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'windows': 0.8, 'noise': 0.4}
+WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHIP IT NOW GPU MODEL TRAIN PLAY CARDS "
+         "FILE SAVE NEW OK YES NO 123 2026 WIN NOTE MEETING AT 5:00 BUY MILK EGGS CALL MOM FIX BUG DEPLOY FRIDAY "
+         "COFFEE PIZZA TONIGHT REMEMBER TO WATER PLANTS SOLITAIRE HIGH SCORE KILLS AMMO HP LOVE THIS COMPUTER "
+         "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
+BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'windows': 0.8, 'noise': 0.4}
 
 
 class Driver:
@@ -193,10 +199,13 @@ class Driver:
             if items and p < 0.35:
                 i = r.randrange(len(items))
                 kind = items[i][1]
-                dbl = kind in ('folder', 'png', 'exe') and r.random() < 0.6 and not trash
+                dbl = kind in ('folder', 'png', 'exe', 'txt') and r.random() < 0.6 and not trash
                 yield from self.click((wc + 2) * T + r.randint(2, 60), (wr + 2 + i) * T + r.randint(1, 6), double=dbl)
                 if self.os.focus == 'paint':
                     yield from self.task_paint(draw_only=True)
+                    return
+                if self.os.focus == 'notepad':
+                    yield from self.task_notepad(type_only=True)
                     return
             elif p < 0.5 and self.os.ex_sel >= 0:
                 if r.random() < 0.6:
@@ -373,6 +382,12 @@ class Driver:
                 if dst[0] == 'found' and r.random() < 0.5:
                     xy = self.card_xy('waste') if src[0] == 'waste' else self.card_xy('tab', src[1], src[2])
                     yield from self.click(*xy, double=True)
+                elif r.random() < 0.5:
+                    xy = self.card_xy('waste') if src[0] == 'waste' else self.card_xy('tab', src[1], src[2])
+                    to = self.card_xy('found', dst[1]) if dst[0] == 'found' else \
+                        self.card_xy('tab', dst[1], max(0, len(o.tab[dst[1]]) - 1))
+                    yield from self.drag(*xy, *to)
+                    yield from self.idle(r.randint(0, 3))
                 else:
                     xy = self.card_xy('waste') if src[0] == 'waste' else self.card_xy('tab', src[1], src[2])
                     yield from self.click(*xy)
@@ -401,7 +416,7 @@ class Driver:
                 continue
             d = self.os.doom
             if r.random() < 0.05:
-                yield self.act(r.randrange(NKEYS - 3))
+                yield self.act(r.randrange(6))
                 continue
             targets = [(depth, sx) for imp, (sx, size, depth) in zip(d.imps, d._project_all())
                        if imp['state'] != 2 and depth > 0 and 0 <= sx < dm.VW and depth < 7]
@@ -421,7 +436,7 @@ class Driver:
                 else:
                     yield self.act(KEY_UP if depth > 2 else 0)
                 continue
-            center = d.raycast()[dm.VW // 2][4]
+            center = d.raycast()[4][dm.VW // 2]
             if wander_left > 0:
                 wander_left -= 1
                 yield self.act(wander_turn)
@@ -433,6 +448,59 @@ class Driver:
         if r.random() < 0.3:
             yield from self.close('doom')
 
+    def type_text(self, text):
+        r = self.rng
+        for ch in text:
+            if ch == '\n':
+                yield from self.press_key(KEY_ENTER)
+            else:
+                if r.random() < 0.04:
+                    yield from self.press_key(KEY_CHAR0 + r.randrange(1, 27))
+                    yield from self.idle(r.randint(0, 3))
+                    yield from self.press_key(KEY_DEL)
+                yield from self.press_key(KEY_CHAR0 + CHAR_IDX[ch])
+            if r.random() < 0.3:
+                yield from self.idle(r.randint(1, 2) if ch != ' ' else r.randint(1, 5))
+
+    def task_notepad(self, type_only=False):
+        r = self.rng
+        if not type_only:
+            if r.random() < 0.3:
+                yield from self.open_app('explorer', 'C:')
+                if 'explorer' in self.os.z:
+                    wc, wr, w, h = self.win('explorer')
+                    if self.os.ex_path != 'C:/DOCS':
+                        yield from self.click((wc + 2) * T + r.randint(2, 30), (wr + 3) * T + 4, double=True)
+                    items = self.os.fs[self.os.ex_path]
+                    txts = [i for i, it in enumerate(items) if it[1] == 'txt']
+                    if txts:
+                        i = r.choice(txts)
+                        yield from self.click((wc + 2) * T + r.randint(2, 50), (wr + 2 + i) * T + 4, double=True)
+            else:
+                yield from self.open_app('notepad')
+        if 'notepad' not in self.os.z:
+            return
+        for _ in range(r.randint(1, 5)):
+            if 'notepad' not in self.os.z:
+                return
+            yield from self.ensure_focus('notepad')
+            wc, wr, w, h = self.win('notepad')
+            p = r.random()
+            if p < 0.65:
+                words = ' '.join(r.choice(WORDS) for _ in range(r.randint(1, 7)))
+                yield from self.type_text(words + ('\n' if r.random() < 0.4 else ' '))
+            elif p < 0.75:
+                yield from self.press_key(KEY_DEL, r.randint(1, 12))
+            elif p < 0.88:
+                yield from self.click(*self.tile_xy(wc + 4, wr + 1, 2 * T))
+            elif p < 0.93:
+                yield from self.click(*self.tile_xy(wc + 1, wr + 1, 2 * T))
+            else:
+                yield from self.click(*self.tile_xy(wc + r.randint(1, w - 2), wr + r.randint(2, h - 2)))
+            yield from self.idle(r.randint(0, 6))
+        if r.random() < 0.3:
+            yield from self.close('notepad')
+
     def task_noise(self):
         r = self.rng
         for _ in range(r.randint(1, 5)):
@@ -443,7 +511,7 @@ class Driver:
                 yield from self.drag(r.randrange(SCREEN_W), r.randrange(SCREEN_H), r.randrange(SCREEN_W),
                                      r.randrange(SCREEN_H))
             elif p < 0.65:
-                yield from self.press_key(r.randrange(1, NKEYS - 1), r.randint(1, 3))
+                yield from self.press_key(r.randrange(1, NKEYS), r.randint(1, 3))
             elif p < 0.8:
                 i = r.randrange(len(DESK_ICONS))
                 ir, ic = icon_pos(i)
