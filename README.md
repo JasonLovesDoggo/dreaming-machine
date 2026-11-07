@@ -1,4 +1,4 @@
-# dreaming-computer
+# Dreaming Machine
 
 A deterministic tile-based micro OS (desktop, file explorer + trash, Paint, Solitaire, Doom-lite) driven by a
 scripted "smart user", used to train a world model that predicts the next screen from the current screen + input.

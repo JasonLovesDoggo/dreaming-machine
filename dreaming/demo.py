@@ -14,12 +14,12 @@ from .tiles import PAL
 app = FastAPI()
 STATE = {}
 
-PAGE = """<!doctype html><html><head><title>Dreaming Computer</title><style>
+PAGE = """<!doctype html><html><head><title>Dreaming Machine</title><style>
 body{background:#181a20;color:#ddd;font-family:monospace;margin:20px}
 canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;cursor:none}
 .row{display:flex;gap:24px}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
 </style></head><body>
-<h2>Dreaming Computer: real simulator (left) vs world model (right)</h2>
+<h2>Dreaming Machine: real simulator (left) vs world model (right)</h2>
 <div class="row"><div><div>REAL (deterministic code)</div><canvas id="real" width="256" height="192"></canvas></div>
 <div><div>NEURAL (world model, __NEURAL__)</div><canvas id="neural" width="256" height="192"></canvas></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
