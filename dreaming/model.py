@@ -64,6 +64,7 @@ class WorldModel(nn.Module):
         self.h_meta = nn.Linear(d, 4 + 32 + 32)
         self.h_state = nn.Linear(d, STATE_MAX)
         self.apply(self._init)
+        self.copy_bias = nn.Parameter(torch.tensor(5.0))
 
     @staticmethod
     def _init(m):
@@ -112,7 +113,8 @@ class WorldModel(nn.Module):
         spl = self.h_spr(h_sp)
         ml = self.h_meta(h_m[:, 0])
         out = dict(
-            grid=self.h_tile(h_t),
+            grid=self.h_tile(h_t).scatter_add(
+                -1, x['grid'].unsqueeze(-1), self.copy_bias.to(h_t.dtype).expand(B, NT, 1)),
             cx=cur_l[:, :256], cy=cur_l[:, 256:],
             d_type=dcl[..., :5], d_side=dcl[..., 5:7], d_h=dcl[..., 7:263], d_u=dcl[..., 263:],
             s_kind=spl[..., :5], s_x=spl[..., 5:261], s_size=spl[..., 261:],

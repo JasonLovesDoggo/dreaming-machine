@@ -25,9 +25,16 @@ class Windows:
         starts = ends - data['ep_len']
         self.valid = np.concatenate([np.arange(s, e - L - 1) for s, e in zip(starts, ends)])
         self.ep_start = np.repeat(starts, data['ep_len'])
+        g = data['grid'].reshape(len(data['grid']), -1)
+        changed = np.zeros(len(g), np.float64)
+        changed[1:] = (g[1:] != g[:-1]).sum(1)
+        cs = np.concatenate([[0], np.cumsum(changed)])
+        act = cs[self.valid + L + 1] - cs[self.valid + 1]
+        w = 0.25 + np.minimum(act, 50)
+        self.p = w / w.sum()
 
     def batch(self, B):
-        s = self.rng.choice(self.valid, B)
+        s = self.rng.choice(self.valid, B, p=self.p)
         idx = s[:, None] + np.arange(self.L + 1)[None]
         out = {k: self.d[k][idx] for k in OBS_KEYS}
         out['action'] = self.d['action'][idx]
@@ -185,7 +192,7 @@ def main():
                 total = total + loss / a.unroll
                 prev_pred = out['grid'].detach().argmax(-1)
                 for k, v in parts.items():
-                    agg[k] = agg.get(k, 0) + float(v) / a.unroll
+                    agg[k] = agg.get(k, 0) + float(v.detach()) / a.unroll
         opt.zero_grad(set_to_none=True)
         total.backward()
         gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
