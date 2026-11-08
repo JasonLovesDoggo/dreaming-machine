@@ -22,9 +22,9 @@ image = (modal.Image.debian_slim(python_version='3.11')
          .pip_install('torch==2.10.0', index_url='https://download.pytorch.org/whl/cu130')
          .run_commands('ln -sf "$(python -c \'import sysconfig; print(sysconfig.get_path("purelib"))\')/nvidia/cu13/lib/libcudart.so.13" /usr/local/lib/libcudart.so && ldconfig')
          .pip_install('numpy', 'pillow')
+         .env({'DREAMING_RUN_ID': RUN_ID})
          .add_local_python_source('dreaming')
-         .add_local_file('dreaming/apps/dreamer_corpus.json.gz', '/root/dreaming/apps/dreamer_corpus.json.gz')
-         .env({'DREAMING_RUN_ID': RUN_ID}))
+         .add_local_file('dreaming/apps/dreamer_corpus.json.gz', '/root/dreaming/apps/dreamer_corpus.json.gz'))
 OUT_DIR = f'/out/runs/{RUN_ID}'
 
 
