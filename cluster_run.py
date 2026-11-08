@@ -9,7 +9,7 @@ from datetime import datetime
 
 import modal
 
-from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, config, config_row, continuation_budget,
+from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, config, config_row, resume_choice, continuation_budget,
                               continuation_cfg, lock_config, merge_metrics,
                               publish_checkpoints, publish_set, run_with_deadline,
                               torchrun_command, validate_run_id, write_json)
@@ -60,7 +60,8 @@ def train_cluster(cfg: dict):
         marker = Path(OUT_DIR) / 'run.json'
         completed = json.loads(marker.read_text())['iter'] if marker.exists() else -1
         return sorted(name for name in publish_names
-                      if int(name[5:-3]) <= completed and (Path(OUT_DIR) / name).exists())
+                      if int(name[5:-3]) <= completed and (Path(OUT_DIR) / name).exists()
+                      and (Path(OUT_DIR) / name).stat().st_mtime >= start)
 
     if rank == 0:
         lock_config(OUT_DIR, cfg)
@@ -68,6 +69,8 @@ def train_cluster(cfg: dict):
         check_budget(records, cfg['budget_hours'] * 3600, cfg['total_cap_hours'] * 3600)
         records.append(dict(start=start, deadline=start + cfg['budget_hours'] * 3600))
         write_json(ledger_path, records)
+        with (Path(OUT_DIR) / 'metrics.jsonl').open('a') as f:
+            f.write(json.dumps(config_row(cfg)) + '\n')
         out.commit()
 
     def tick():
@@ -129,8 +132,6 @@ def continue_after(after_iter: int, end_iter: int, ckpt_every: int, stop_at: flo
     now = time.time()
     cfg = continuation_cfg(RUN_ID, read(out_dir / 'launch.json', None), after_iter, end_iter, ckpt_every, seconds, now)
     write_json(out_dir / CONTINUED, dict(time=now, after_iter=after_iter, cfg=cfg))
-    with (out_dir / 'metrics.jsonl').open('a') as f:
-        f.write(json.dumps(config_row(cfg)) + '\n')
     out.commit()
     print(json.dumps(cfg, indent=2), flush=True)
     return train_cluster.remote(cfg)
@@ -188,11 +189,14 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_ever
            unroll: int = 6, data_path: str = '/vol/shards',
            extra_data: str = '/vol/shards_cats_dense_v1', extra_frac: float = 0.15,
            extra_shards: int = 40, holdout_episodes: int = 2, sampler_v2: bool = False,
-           source: str = '/vol/runs/atlas_v2_first_5k/ckpt_005000.pt', total_cap_hours: float = 8.):
+           source: str = '/vol/runs/atlas_v2_first_5k/ckpt_005000.pt', total_cap_hours: float = 8.,
+           resume_iter: int = 0):
     lock, records, resumed, marker = read_state()
     if resumed and marker is None:
         raise ValueError('checkpoint exists without run.json: cannot determine publication start')
-    start_iter = marker['iter'] if resumed else restart_iter
+    if resume_iter and not resumed:
+        raise ValueError('--resume-iter requires an existing resumable run')
+    start_iter, latest = resume_choice(marker['iter'], read_names(), resume_iter, restart_iter) if resumed else (restart_iter, '')
     cfg = config(RUN_ID, phase, steps or None, end_iter=end_iter, start_iter=start_iter, ckpt_every=ckpt_every,
                  guard_max_loss=guard_max_loss, lr=lr, warmup=warmup, iters=iters,
                  budget_hours=budget_hours, min_lr_frac=min_lr_frac, restart_iter=restart_iter,
@@ -203,13 +207,7 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_ever
     check_lock(cfg, lock)
     check_budget(records, budget_hours * 3600, total_cap_hours * 3600)
     cfg['deadline'] = time.time() + budget_hours * 3600
-    if resumed:
-        latest = f"ckpt_{marker['iter']:06d}.pt"
-        if latest not in read_names():
-            raise ValueError(f'completed checkpoint {latest} missing; refusing partial ckpt.pt')
-        cfg['resume'] = f'{OUT_DIR}/{latest}'
-    else:
-        cfg['resume'] = source
+    cfg['resume'] = f'{OUT_DIR}/{latest}' if resumed else source
     print(json.dumps(cfg, indent=2))
     print(shlex.join(torchrun_command(cfg, resume=cfg['resume'])))
     if not dry_run:

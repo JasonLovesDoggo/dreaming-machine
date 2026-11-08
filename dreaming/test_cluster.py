@@ -407,3 +407,32 @@ def test_continuation_treats_null_end_as_active():
     records = _ledger()
     records[-1]['end'] = None
     assert continuation_budget(records, _ledger(), 20000, 20000, 20000, 9000., 1e9) is None
+
+
+def test_launch_resume_iter_pins_earlier_completed_checkpoint(monkeypatch, capsys):
+    monkeypatch.setenv('DREAMING_RUN_ID', 'resume-test')
+    import cluster_run
+    marker = dict(atlas_version=2, iter=16000)
+    names = {'ckpt.pt', 'run.json', 'ckpt_015000.pt', 'ckpt_016000.pt'}
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], True, marker))
+    monkeypatch.setattr(cluster_run, 'read_names', lambda: names)
+    cluster_run.launch(end_iter=65000, ckpt_every=1000, resume_iter=15000, dry_run=True)
+    output = capsys.readouterr().out
+    assert f'--resume {cluster_run.OUT_DIR}/ckpt_015000.pt' in output and '--chunk 50000' in output
+    assert '"start_iter": 15000' in output
+    cluster_run.launch(end_iter=65000, ckpt_every=1000, dry_run=True)
+    assert f'--resume {cluster_run.OUT_DIR}/ckpt_016000.pt' in capsys.readouterr().out
+    for bad, match in [(17000, 'must be in'), (5000, 'must be in'), (14000, 'missing')]:
+        with pytest.raises(ValueError, match=match):
+            cluster_run.launch(end_iter=65000, ckpt_every=1000, resume_iter=bad, dry_run=True)
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], False, None))
+    with pytest.raises(ValueError, match='requires an existing'):
+        cluster_run.launch(end_iter=65000, ckpt_every=1000, resume_iter=15000, dry_run=True)
+
+
+def test_resume_choice_rejects_bad_types():
+    from dreaming.cluster import resume_choice
+    assert resume_choice(16000, {'ckpt_016000.pt'}) == (16000, 'ckpt_016000.pt')
+    for bad in (True, 15000.0, -1):
+        with pytest.raises(ValueError):
+            resume_choice(16000, {'ckpt_015000.pt'}, bad)

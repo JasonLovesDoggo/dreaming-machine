@@ -250,6 +250,17 @@ class CalibrationGuard:
             logging.warning('projected end %.0f exceeds kill_at %.0f (warning only)', projected, self.kill_at)
 
 
+def resume_choice(marker_iter, names, resume_iter=0, restart_iter=5000):
+    """(start_iter, checkpoint basename): latest marker by default, or an earlier completed numbered one."""
+    it = resume_iter or marker_iter
+    if isinstance(it, bool) or not isinstance(it, int) or not restart_iter < it <= marker_iter:
+        raise ValueError(f'resume iteration must be in ({restart_iter}, {marker_iter}]')
+    name = f'ckpt_{it:06d}.pt'
+    if name not in names:
+        raise ValueError(f'completed checkpoint {name} missing; refusing partial ckpt.pt')
+    return it, name
+
+
 def continuation_budget(records, snapshot, out_iter, published_iter, after_iter, now, stop_at,
                         total_cap_hours=8., min_hours=0.5):
     """Seconds for the single continuation, or None while the boundary run is still finishing."""
