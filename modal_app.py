@@ -123,4 +123,5 @@ def web():
     from dreaming.web import create_app
     from dreaming.web.telemetry import configure_modal
     configure_modal(vol)
-    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', ckpt_root=RUNS, ckpt_refresh=vol.reload, device='cuda')
+    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', ckpt_root=RUNS, ckpt_refresh=vol.reload,
+                      device='cuda', runs_dir=RUNS, metrics_refresh=vol.reload)

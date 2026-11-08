@@ -18,3 +18,20 @@ footer { margin-top: 16px; color: #888; }
 #frame { width: 768px; height: 576px; border: 2px solid #444; }
 #scrub { width: 768px; }
 .sheet { border: 1px solid #444; display: block; margin: 6px 0 18px; }
+
+/* training metrics */
+#status { margin: 6px 0; color: #aaa; min-height: 1.2em; }
+#status .warn, .warn { color: #ffb86c; }
+#runs { border-collapse: collapse; margin: 8px 0; }
+#runs td, #runs th { padding: 2px 10px 2px 4px; text-align: left; vertical-align: top; }
+#runs th { color: #888; font-weight: normal; }
+#runs .run-id { white-space: nowrap; }
+#runs .notes { color: #aaa; max-width: 520px; }
+.swatch { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
+.notice { color: #aaa; border: 1px dashed #555; padding: 8px 12px; margin: 8px 0; max-width: 900px; }
+.charts { display: flex; flex-wrap: wrap; gap: 18px; }
+.chart { background: #1f2229; border: 1px solid #333; padding: 6px; }
+.chart h4 { margin: 2px 0; font-weight: normal; color: #ddd; }
+.chart .note, .note { color: #888; font-size: 12px; max-width: 900px; }
+.chart .uplot { font-family: monospace; color: #ccc; }
+.chart .u-legend { font-size: 12px; text-align: left; }
