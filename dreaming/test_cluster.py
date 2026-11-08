@@ -101,6 +101,42 @@ def test_config_lock_budget_and_command(tmp_path):
     assert '--sampler-v2' in torchrun_command(config('pilot-test', sampler_v2=True))
 
 
+@pytest.mark.parametrize('cadence', [0, -1000, '1000', 1000.0, True])
+def test_invalid_checkpoint_cadence(cadence):
+    with pytest.raises(ValueError, match='positive int'):
+        config('cadence-test', ckpt_every=cadence)
+
+
+def test_checkpoint_cadence(tmp_path):
+    default = config('cadence-test')
+    assert default['ckpt_every'] == 5000
+    assert default == config('cadence-test', ckpt_every=5000)
+    assert torchrun_command(default) == torchrun_command(config('cadence-test', ckpt_every=5000))
+    command = torchrun_command(default)
+    assert command[command.index('--ckpt-every') + 1] == '5000'
+    cfg = config('cadence-test', ckpt_every=1000, end_iter=7000)
+    command = torchrun_command(cfg)
+    assert command[command.index('--ckpt-every') + 1] == '1000'
+    assert publish_set(cfg, 5000) == {'ckpt_006000.pt', 'ckpt_007000.pt'}
+    assert config('cadence-test', ckpt_every=1000, end_iter=6000)['end_iter'] == 6000
+    with pytest.raises(ValueError, match='multiple of ckpt_every'):
+        config('cadence-test', ckpt_every=1000, end_iter=10500)
+    with pytest.raises(ValueError, match='cosine horizon'):
+        config('cadence-test', ckpt_every=1000, end_iter=66000)
+    lock_config(tmp_path / 'out', default)
+    lock_config(tmp_path / 'out', cfg)
+    src, dst = tmp_path / 'out', tmp_path / 'cadence-test'
+    for name in publish_set(cfg, 5000):
+        (src / name).write_bytes(b'checkpoint')
+    (src / 'run.json').write_text(json.dumps(dict(atlas_version=2, iter=6000)))
+    publish_checkpoints(src, dst, ['ckpt_006000.pt'])
+    with pytest.raises(ValueError, match='not complete'):
+        publish_checkpoints(src, dst, ['ckpt_007000.pt'])
+    (src / 'run.json').write_text(json.dumps(dict(atlas_version=2, iter=7000)))
+    publish_checkpoints(src, dst, sorted(publish_set(cfg, 5000)))
+    assert json.loads((dst / 'run.json').read_text())['iter'] == 7000
+
+
 def test_resumed_publication_sets():
     cfg = config('long-test')
     assert publish_set(cfg, 5000) == {'ckpt_010000.pt'}
@@ -159,6 +195,9 @@ def test_dry_run_does_not_launch(monkeypatch, capsys):
     cluster_run.launch(dry_run=True)
     output = capsys.readouterr().out
     assert '"end_iter": 10000' in output and '--ckpt-every 5000' in output
+    cluster_run.launch(end_iter=6000, ckpt_every=1000, dry_run=True)
+    output = capsys.readouterr().out
+    assert '"end_iter": 6000' in output and '--ckpt-every 1000' in output
 
 
 def test_launch_resumes_completed_numbered_checkpoint(monkeypatch, capsys):

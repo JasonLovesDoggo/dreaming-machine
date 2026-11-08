@@ -38,8 +38,10 @@ def config(run_id, phase='long', steps=None, end_iter=10000, start_iter=5000, **
                extra_data='/vol/shards_cats_dense_v1', extra_frac=0.15, extra_shards=40,
                holdout_episodes=2, source=SOURCE, budget_hours=8., total_cap_hours=8.)
     cfg.update(overrides)
-    if cfg['end_iter'] % 5000 or cfg['end_iter'] > cfg['iters']:
-        raise ValueError('end iteration must be a multiple of 5000 within the cosine horizon')
+    if type(cfg['ckpt_every']) is not int or cfg['ckpt_every'] <= 0:
+        raise ValueError('ckpt_every must be a positive int')
+    if cfg['end_iter'] % cfg['ckpt_every'] or cfg['end_iter'] > cfg['iters']:
+        raise ValueError('end iteration must be a multiple of ckpt_every within the cosine horizon')
     if not (0 <= cfg['restart_iter'] < cfg['iters'] and cfg['warmup'] >= 1
             and 0 <= cfg['min_lr_frac'] <= 1 and cfg['steps'] > 0 and cfg['lr'] > 0
             and 0 < cfg['budget_hours'] <= 8 and cfg['total_cap_hours'] > 0 and cfg['guard_max_loss'] > 0):
