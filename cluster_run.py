@@ -52,7 +52,7 @@ def train_cluster(cfg: dict):
     records: list[dict] = []
     publish_names = publish_set(cfg, cfg['start_iter'])
     guard = CalibrationGuard(Path(OUT_DIR) / 'metrics.jsonl', cfg, kill_at)
-    spawned = set()
+    spawned: set[str] = set()
 
     def ready():
         return sorted(name for name in publish_names if (Path(OUT_DIR) / name).exists())
@@ -111,7 +111,7 @@ def read_state():
 
 
 @app.local_entrypoint()
-def launch(phase: str = 'long', steps: int = 0, end_iter: int = 45000,
+def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
            guard_max_loss: float = 2.0, lr: float = 4e-4, warmup: int = 200,
            iters: int = 65000, budget_hours: float = 8., dry_run: bool = False,
            min_lr_frac: float = 0.1, restart_iter: int = 5000, batch: int = 32,

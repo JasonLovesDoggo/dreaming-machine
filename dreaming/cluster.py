@@ -26,7 +26,7 @@ def validate_run_id(run_id):
     return name
 
 
-def config(run_id, phase='long', steps=None, end_iter=45000, start_iter=5000, **overrides):
+def config(run_id, phase='long', steps=None, end_iter=10000, start_iter=5000, **overrides):
     validate_run_id(run_id)
     if phase != 'long':
         raise ValueError('only the long phase is supported')
@@ -42,9 +42,9 @@ def config(run_id, phase='long', steps=None, end_iter=45000, start_iter=5000, **
         raise ValueError('end iteration must be a multiple of 5000 within the cosine horizon')
     if not (0 <= cfg['restart_iter'] < cfg['iters'] and cfg['warmup'] >= 1
             and 0 <= cfg['min_lr_frac'] <= 1 and cfg['steps'] > 0 and cfg['lr'] > 0
-            and 0 < cfg['budget_hours'] <= 8 and cfg['total_cap_hours'] > 0):
+            and 0 < cfg['budget_hours'] <= 8 and cfg['total_cap_hours'] > 0 and cfg['guard_max_loss'] > 0):
         raise ValueError('invalid schedule or budget')
-    if not all(math.isfinite(float(cfg[k])) for k in ('lr', 'budget_hours', 'total_cap_hours')):
+    if not all(math.isfinite(float(cfg[k])) for k in ('lr', 'budget_hours', 'total_cap_hours', 'guard_max_loss')):
         raise ValueError('non-finite config')
     return cfg
 
