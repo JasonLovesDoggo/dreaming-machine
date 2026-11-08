@@ -2,31 +2,63 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dreaming Computer: training metrics</title>
   <link rel="stylesheet" href="static/vendor/uplot/uPlot.min.css">
   <link rel="stylesheet" href="static/style.css">
 </head>
-<body>
-  <h2>Dreaming Computer: training metrics</h2>
-  <div>
-    <button id="reload">reload</button>
-    <label><input id="auto" type="checkbox" checked> auto-reload every 60s</label>
-    smoothing <select id="smooth"><option value="0">off</option><option value="0.6">EMA 0.6</option><option value="0.9">EMA 0.9</option></select>
-    <label><input id="logy" type="checkbox" checked> log-scale losses</label>
+<body class="tp">
+  <header class="tp-head">
+    <h1>Dreaming Computer <span>/ training metrics</span></h1>
+    <div id="status"></div>
+  </header>
+  <div class="toolbar">
+    <button id="resetzoom" class="primary" disabled title="Show every chart's full data again">Reset zoom</button>
+    <span id="zoomhint" class="hint">Drag across a chart to zoom; training charts zoom together, held-out charts together. Double-click a chart or press Reset zoom to zoom back out.</span>
+    <span class="spacer"></span>
+    <label>x axis <select id="xaxis"><option value="it">iteration</option><option value="samples">frame samples (config)</option></select></label>
+    <label>smoothing <select id="smooth"><option value="0">off</option><option value="0.6">EMA 0.6</option><option value="0.9">EMA 0.9</option></select></label>
+    <label><input id="logy" type="checkbox" checked> log losses</label>
+    <label><input id="auto" type="checkbox" checked> auto-reload 60s</label>
+    <button id="reload">Reload</button>
   </div>
-  <div id="status"></div>
-  <table id="runs"></table>
-  <div id="empty" class="notice" hidden></div>
-  <h3>held-out evaluation</h3>
-  <div>app <select id="app"></select></div>
-  <div id="eval" class="charts"></div>
-  <h3>training (per training batch)</h3>
-  <div id="train" class="charts"></div>
-  <p class="note">One line per run; click a legend entry to hide it. Training curves are thinned to at most 2000 points per run.
-     Missing data is left out, never filled in.</p>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Active run</h2><label>run <select id="active"></select></label></div>
+    <div id="summary" class="tiles"></div>
+  </section>
+
+  <section>
+    <div class="panel-head"><h2>Key curves</h2><span class="hint">Training batches, not held-out data. Choose runs under <a href="#runs-section">Runs</a>.</span></div>
+    <div id="key" class="charts"></div>
+  </section>
+
+  <section>
+    <div class="panel-head"><h2>Held-out quality</h2><label>app <select id="app"></select></label></div>
+    <p class="note">From dreaming/eval.py on episodes the model never trained on. This is the generalization signal; training-batch accuracy is not.</p>
+    <div id="evalstatus"></div>
+    <div id="evaltable"></div>
+    <div id="eval" class="charts"></div>
+    <details><summary>more held-out detail: grid CE, small/large changes, all-tile accuracy, per-step rollouts</summary><div id="evalmore" class="charts"></div></details>
+  </section>
+
+  <section id="runs-section">
+    <div class="panel-head"><h2>Runs</h2><span class="hint">One line per run in every chart; click a legend entry to hide it.</span></div>
+    <table id="runs"></table>
+    <div id="empty" class="notice" hidden></div>
+  </section>
+
+  <section>
+    <div class="panel-head"><h2>Throughput &amp; schedule</h2></div>
+    <div id="train" class="charts"></div>
+    <details><summary>advanced: per-head losses, gradient norm, scheduled sampling, batch stats</summary><div id="trainmore" class="charts"></div></details>
+  </section>
+
+  <p class="note">Training curves are thinned to at most 2000 points per run. Missing data is left out, never filled in.</p>
   <footer><a href=".">play the computer</a> &middot; <a href="data">training data viewer</a> &middot; <a href="sprites">tile &amp; sprite atlas</a></footer>
   <script src="static/telemetry.js"></script>
   <script src="static/vendor/uplot/uPlot.iife.min.js"></script>
+  <script src="static/training_core.js"></script>
   <script src="static/training.js"></script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 """Training metrics: reads <runs_dir>/<run>/metrics.jsonl, one JSON object per line.
 
 Train rows: {"kind": "train", "it": 25, "loss": ..., "grid": ..., ...}; every other numeric top-level
-field becomes a series. Eval rows: {"kind": "eval", "it": ..., "metrics": {app: dreaming.eval result}}.
+field becomes a series. Eval rows: {"kind": "eval", "it": ..., "metrics": {app: dreaming.eval result}}, or
+{"metrics": {"modes": {app: result}, <protocol metadata>...}}. Config rows: {"kind": "config", "config": {...}} carry
+per-run metadata (frame-sample baseline, samples per update, checkpoint cadence, LR schedule) used for the summary.
 Only run directories directly under the configured root are read, and only their metrics.jsonl
 (never checkpoints). Files are parsed incrementally and bounded in bytes, rows and points."""
 import copy
@@ -24,6 +26,7 @@ log = logging.getLogger(__name__)
 METRICS_FILE = 'metrics.jsonl'
 RUN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
 FLAT_ROLLOUT = re.compile(r'roll(\d{1,6})_(acc|copy)_(mean|final)')
+ROLLOUT_ACC = re.compile(r'rollout\d{1,6}_acc_(mean|final|at\d{1,6})')
 MAX_RUNS = 200
 MAX_BYTES = 16 << 20
 MAX_LINE = 1 << 20
@@ -36,6 +39,14 @@ MAX_CACHED = 32
 SCAN_TTL = 10.0
 REFRESH_TTL = 60.0
 POINTS = 2000
+RECENT = 9
+# The only config fields kept: (minimum, integer). Unknown keys are ignored, so config stays bounded.
+CONFIG_FIELDS = {
+    'frame_samples_base': (0, True), 'frame_samples_base_iter': (0, True), 'samples_per_update': (1, True),
+    'world_size': (1, True), 'batch': (1, True), 'unroll': (1, True), 'log_every': (1, True),
+    'checkpoint_every': (1, True), 'phase_end': (0, True), 'schedule_end': (0, True), 'restart_iter': (0, True),
+    'warmup': (0, True), 'peak_lr': (0, False), 'min_lr_frac': (0, False),
+}
 
 
 def _num(v):
@@ -74,6 +85,12 @@ class _Parsed:
     restarts: int = 0
     truncated: bool = False
     last_it: int | None = None
+    config: dict = field(default_factory=dict)
+    config_it: int | None = None
+    config_rejected: list = field(default_factory=list)
+    sps: list = field(default_factory=list)
+    update_secs: list = field(default_factory=list)
+    prev: tuple | None = None
 
     def note(self, key, value):
         values = self.notes.get(key)
@@ -88,6 +105,9 @@ class _Parsed:
         if not isinstance(row, dict):
             self.skipped += 1
             return
+        if row.get('kind') == 'config':
+            self._config(row)
+            return
         it, _ = _num(row.get('it'))
         if it is None or it < 0:
             self.skipped += 1
@@ -97,10 +117,11 @@ class _Parsed:
         if kind == 'eval':
             self._eval(it, row.get('metrics'))
         elif kind == 'train':
-            if self.last_it is not None and it <= self.last_it:
-                self.restarts += 1
+            restarted = self.last_it is not None and it <= self.last_it
+            self.restarts += restarted
             self.last_it = it
             self._train(it, row)
+            self._speed(it, self.train[-1][1], restarted)
         else:
             self.skipped += 1
 
@@ -123,6 +144,35 @@ class _Parsed:
         if len(self.train) > MAX_TRAIN_ROWS:
             del self.train[:len(self.train) - MAX_TRAIN_ROWS]
             self.truncated = True
+
+    def _speed(self, it, values, restarted):
+        """Recent throughput, skipping the first log after each (re)start: it includes torch.compile warm-up."""
+        t, sps = values.get('time'), values.get('samples_per_sec')
+        if self.prev is not None and not restarted:
+            prev_it, prev_t = self.prev
+            if sps is not None and sps > 0:
+                self.sps = (self.sps + [sps])[-RECENT:]
+            if t is not None and prev_t is not None and t > prev_t:
+                self.update_secs = (self.update_secs + [(t - prev_t) / (it - prev_it)])[-RECENT:]
+        self.prev = (it, t)
+
+    def _config(self, row):
+        cfg = row.get('config')
+        if not isinstance(cfg, dict):
+            self.skipped += 1
+            return
+        it, _ = _num(row.get('it'))
+        for k, (low, integer) in CONFIG_FIELDS.items():
+            if k not in cfg:
+                continue
+            value, _ = _num(cfg[k])
+            if value is None or value < low or (integer and value != int(value)):
+                if k not in self.config_rejected:
+                    self.config_rejected.append(k)
+                self.config.pop(k, None)
+                continue
+            self.config[k] = int(value) if integer else value
+        self.config_it = int(it) if it is not None else self.config_it
 
     def _eval_note(self, it, key, value):
         """Protocol/provenance metadata next to the per-app results, e.g. eval_protocol, idle, eval_decode_commit."""
@@ -170,7 +220,7 @@ class _Parsed:
                 if not _name(str(horizon), 8) or not isinstance(r, dict):
                     continue
                 curves = {}
-                for key, short in (('acc_per_step', 'acc'), ('copy_first_acc_per_step', 'copy')):
+                for key, short in (('acc_per_step', 'acc'), ('copy_first_acc_per_step', 'copy'), ('fp_change_rate_per_step', 'fp')):
                     steps = r.get(key)
                     if not isinstance(steps, list) or not steps:
                         continue
@@ -185,8 +235,19 @@ class _Parsed:
                         out[f'rollout{horizon}_{short}_mean'] = sum(finite) / len(finite)
                     if values[-1] is not None:
                         out[f'rollout{horizon}_{short}_final'] = values[-1]
+                for key, short in (('acc_at_steps', 'acc'), ('copy_first_acc_at_steps', 'copy')):
+                    at = r.get(key)
+                    for step, v in (list(at.items())[:8] if isinstance(at, dict) else ()):
+                        value, bad = _num(v)
+                        self.nonfinite += bad
+                        if value is not None and _name(str(step), 6):
+                            out[f'rollout{horizon}_{short}_at{step}'] = value
                 if curves:
                     self.curves.setdefault(app, {})[str(horizon)] = dict(it=it, **curves)
+            for k in [k for k in out if ROLLOUT_ACC.fullmatch(k)]:
+                base = out.get(k.replace('_acc_', '_copy_'))
+                if base is not None:
+                    out[k.replace('_acc_', '_gap_')] = out[k] - base
             apps[app] = out
         self.evals.append((it, apps))
         if len(self.evals) > MAX_EVAL_ROWS:
@@ -371,12 +432,67 @@ def metrics(run: str = Query(max_length=128), points: int = Query(POINTS, ge=50,
         return _metrics(STORE.lookup(run), STORE.parsed, points)
 
 
+def _median(xs):
+    xs, n = sorted(xs), len(xs)
+    return None if not n else xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def _lr_phase(cfg, it):
+    """Where `it` sits in the LR schedule the run's config row describes; None without that metadata."""
+    start, warm, end = cfg.get('restart_iter'), cfg.get('warmup'), cfg.get('schedule_end')
+    if it is None or start is None or warm is None or end is None or end <= start:
+        return None
+    peak, frac = cfg.get('peak_lr'), cfg.get('min_lr_frac')
+    name = 'before restart' if it < start else 'warm-up' if it < start + warm else 'cosine decay' if it < end else 'floor'
+    return dict(name=name, restart_iter=start, warmup_end=start + warm, schedule_end=end, peak_lr=peak,
+                min_lr=peak * frac if peak is not None and frac is not None else None,
+                progress=min(1.0, max(0.0, (it - start) / (end - start))))
+
+
+def _summary(state, info, now):
+    """Active-run numbers: only measured values or arithmetic on the run's own config row, otherwise None."""
+    # The last-written row, not the highest iteration: after a resume from an earlier checkpoint this is the live cursor.
+    cfg = state.config
+    last_it, last = state.train[-1] if state.train else (None, {})
+    last_time = last.get('time')
+    sps = _median(state.sps)
+    sec, source = _median(state.update_secs), 'row timestamps'
+    if sec is None and sps and cfg.get('samples_per_update'):
+        sec, source = cfg['samples_per_update'] / sps, 'config samples_per_update / samples/s'
+    frames = None
+    if last_it is not None and {'frame_samples_base', 'frame_samples_base_iter', 'samples_per_update'} <= cfg.keys() \
+            and last_it >= cfg['frame_samples_base_iter']:
+        frames = cfg['frame_samples_base'] + (last_it - cfg['frame_samples_base_iter']) * cfg['samples_per_update']
+    since = last_time if last_time is not None else info['mtime']
+    marks = []
+    if last_it is not None:
+        if cfg.get('checkpoint_every'):
+            marks.append(('next checkpoint', (last_it // cfg['checkpoint_every'] + 1) * cfg['checkpoint_every']))
+        marks += [(label, cfg[k]) for k, label in (('phase_end', 'phase end'), ('schedule_end', 'LR schedule end'))
+                  if cfg.get(k) and cfg[k] > last_it]
+    milestones = []
+    for label, it in marks:
+        eta = (it - last_it) * sec if sec is not None else None
+        milestones.append(dict(label=label, it=it, updates=it - last_it, seconds=eta,
+                               at=since + eta if eta is not None else None))
+    return dict(last_it=last_it, last_time=last_time, file_mtime=info['mtime'], server_time=now,
+                samples_per_sec=sps, samples_per_sec_logs=len(state.sps),
+                sec_per_update=sec, sec_per_update_source=source if sec is not None else None,
+                sec_per_update_logs=len(state.update_secs), frame_samples=frames, lr=last.get('lr'),
+                lr_phase=_lr_phase(cfg, last_it), milestones=milestones,
+                last_eval_it=max((it for it, _ in state.evals), default=None))
+
+
 def _metrics(info, parsed, points):
     state = parsed(info['path'])
     evals = _latest_per_it(state.evals)
     apps = sorted({app for _, a in evals for app in a})
+    config = None
+    if state.config or state.config_rejected:
+        config = dict(values=dict(state.config), it=state.config_it, rejected=list(state.config_rejected))
     return dict(
         id=info['id'], bytes=info['bytes'], mtime=info['mtime'], last_it=state.last_it,
+        config=config, summary=_summary(state, info, time.time()),
         skipped_lines=state.skipped, nonfinite_values=state.nonfinite, restarts=state.restarts,
         truncated=state.truncated, notes=dict(state.notes),
         train=_columns(state.train, points),

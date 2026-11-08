@@ -1,5 +1,7 @@
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -132,6 +134,122 @@ class TrainingMetricsTest(unittest.TestCase):
         self.assertEqual(d['eval']['apps'], ['doom', 'mixed'])
         self.assertEqual(sorted(d['notes']), ['eval note', 'eval protocol'])
 
+    LIVE_CONFIG = dict(frame_samples_base=960000, frame_samples_base_iter=5000, samples_per_update=4608, world_size=24,
+                       batch=32, unroll=6, checkpoint_every=5000, phase_end=20000, schedule_end=65000, restart_iter=5000,
+                       warmup=200, peak_lr=0.0004, min_lr_frac=0.1)
+
+    def test_config_row_drives_summary_without_counting_as_train(self):
+        t0 = 1000.0
+        rows = [dict(kind='config', it=5000, config=self.LIVE_CONFIG)]
+        rows += [train_row(it, time=t0 + (it - 5000) * 0.256, samples_per_sec=500.0 if it == 5025 else 18000.0, lr=4e-4)
+                 for it in range(5025, 5225, 25)]
+        self.write('live', rows)
+        d = self.metrics('live')
+        self.assertEqual((d['train']['rows'], d['restarts'], d['skipped_lines'], d['last_it']), (8, 0, 0, 5200))
+        self.assertEqual(d['config'], dict(values=self.LIVE_CONFIG, it=5000, rejected=[]))
+        s = d['summary']
+        self.assertEqual(s['frame_samples'], 960000 + 200 * 4608)
+        self.assertEqual((s['samples_per_sec'], s['samples_per_sec_logs']), (18000.0, 7))
+        self.assertAlmostEqual(s['sec_per_update'], 0.256)
+        self.assertEqual(s['sec_per_update_source'], 'row timestamps')
+        self.assertEqual(s['last_time'], t0 + 200 * 0.256)
+        ckpt, phase_end, schedule_end = s['milestones']
+        self.assertEqual((ckpt['label'], ckpt['it'], ckpt['updates']), ('next checkpoint', 10000, 4800))
+        self.assertAlmostEqual(ckpt['seconds'], 4800 * 0.256)
+        self.assertAlmostEqual(ckpt['at'], s['last_time'] + 4800 * 0.256)
+        self.assertEqual((phase_end['it'], schedule_end['it']), (20000, 65000))
+        self.assertEqual(s['lr_phase']['name'], 'cosine decay')
+        self.assertEqual((s['lr_phase']['warmup_end'], s['lr_phase']['peak_lr']), (5200, 0.0004))
+        self.assertAlmostEqual(s['lr_phase']['min_lr'], 4e-5)
+        self.assertIsNone(s['last_eval_it'])
+        self.assertEqual(d['eval']['rows'], 0)
+
+    def test_later_config_rows_override_cadence(self):
+        rows = [dict(kind='config', it=5000, config=self.LIVE_CONFIG), train_row(20000, time=1.0),
+                dict(kind='config', it=20000, config=dict(checkpoint_every=1000, phase_end=40000)), train_row(20025, time=7.4)]
+        self.write('live', rows)
+        s = self.metrics('live')['summary']
+        self.assertEqual([(m['label'], m['it']) for m in s['milestones']],
+                         [('next checkpoint', 21000), ('phase end', 40000), ('LR schedule end', 65000)])
+        self.assertAlmostEqual(s['sec_per_update'], 0.256)
+
+    def test_invalid_or_missing_config_leaves_values_unavailable(self):
+        self.write('old', [train_row(25), train_row(50)])
+        d = self.metrics('old')
+        self.assertIsNone(d['config'])
+        s = d['summary']
+        for k in ('frame_samples', 'sec_per_update', 'lr_phase', 'last_time'):
+            self.assertIsNone(s[k], k)
+        self.assertEqual((s['milestones'], s['samples_per_sec'], s['last_it']), ([], 900.0, 50))
+        bad = dict(samples_per_update=0, frame_samples_base=float('nan'), checkpoint_every=True, warmup=-1, batch=2.5,
+                   restart_iter='5000', note='mirrored', extra=1.5, nested=dict(a=1))
+        self.write('bad', [dict(kind='config', it=5, config=bad), dict(kind='config', config=[1]),
+                           dict(kind='config', it=5, config=dict(checkpoint_every=0)), train_row(25)])
+        d = self.metrics('bad')
+        self.assertEqual(d['skipped_lines'], 1)
+        self.assertEqual(d['config']['values'], {}, 'unknown keys (note, extra, nested) are ignored')
+        self.assertEqual(sorted(d['config']['rejected']),
+                         ['batch', 'checkpoint_every', 'frame_samples_base', 'restart_iter', 'samples_per_update', 'warmup'])
+        self.assertEqual((d['summary']['milestones'], d['summary']['frame_samples']), ([], None))
+        self.assertEqual((d['train']['rows'], d['restarts']), (1, 0))
+
+    def test_config_only_keeps_known_fields_across_many_rows(self):
+        rows = [dict(kind='config', it=i, config={**{f'k{i}_{j}': j for j in range(100)}, 'label': 'x' * 500,
+                                                 'checkpoint_every': 1000 + i, 'peak_lr': 4e-4})
+                for i in range(300)]
+        self.write('many', rows + [train_row(25)])
+        cfg = self.metrics('many')['config']
+        self.assertEqual(cfg['values'], dict(checkpoint_every=1299, peak_lr=4e-4))
+        self.assertEqual((cfg['it'], cfg['rejected']), (299, []))
+        self.assertLessEqual(set(cfg['values']), set(training.CONFIG_FIELDS))
+
+    def test_summary_follows_last_written_row_after_resume(self):
+        rows = [dict(kind='config', it=0, config=dict(checkpoint_every=1000, frame_samples_base=0,
+                                                       frame_samples_base_iter=0, samples_per_update=10))]
+        rows += [train_row(it, time=float(it), lr=1e-4) for it in (1000, 2000, 3000)]
+        rows += [eval_row(3000)]
+        rows += [train_row(it, time=5000.0 + it, lr=2e-4) for it in (2100, 2200)]
+        self.write('resumed', rows)
+        d = self.metrics('resumed')
+        s = d['summary']
+        self.assertEqual((d['last_it'], s['last_it'], s['last_time'], s['lr']), (2200, 2200, 7200.0, 2e-4))
+        self.assertEqual(s['frame_samples'], 22000)
+        self.assertEqual(s['milestones'][0]['it'], 3000)
+        self.assertEqual((s['last_eval_it'], d['restarts']), (3000, 1))
+
+    def test_summary_for_eval_only_run(self):
+        self.write('evalonly', [eval_row(5000)])
+        s = self.metrics('evalonly')['summary']
+        self.assertEqual((s['last_it'], s['last_time'], s['last_eval_it'], s['milestones']), (None, None, 5000, []))
+
+    def test_summary_falls_back_to_config_samples_per_update(self):
+        self.write('run', [dict(kind='config', config=dict(samples_per_update=4608, checkpoint_every=1000)),
+                           train_row(25, samples_per_sec=10.0), train_row(50, samples_per_sec=18432.0)])
+        s = self.metrics('run')['summary']
+        self.assertAlmostEqual(s['sec_per_update'], 0.25)
+        self.assertEqual(s['sec_per_update_source'], 'config samples_per_update / samples/s')
+        self.assertEqual(s['milestones'][0]['it'], 1000)
+        self.assertIsNone(s['frame_samples'])
+
+    def test_eval_false_change_and_rollout_gap_fields(self):
+        mode = dict(grid_ce=0.1, acc_all=0.99, acc_changed=0.6, copy_last_acc_all=0.98, fp_change_rate=0.002,
+                    copy_last_fp_change_rate=0.0, acc_changed_small=0.7, acc_changed_large=0.4,
+                    rollouts={'30': dict(acc_per_step=[0.9, 0.8], copy_first_acc_per_step=[0.9, 0.6],
+                                         fp_change_rate_per_step=[0.01, 0.03], acc_at_steps={'10': 0.85},
+                                         copy_first_acc_at_steps={'10': 0.7})})
+        self.write('run', [dict(kind='eval', it=10000, metrics=dict(mixed=mode, cats=dict(acc_changed=0.3, roll30_acc_final=0.5,
+                                                                                            roll30_copy_final=0.4)))])
+        d = self.metrics('run')
+        m = d['eval']['points']['mixed']['series']
+        self.assertEqual((m['fp_change_rate'], m['copy_last_fp_change_rate'], m['acc_changed_large']), ([0.002], [0.0], [0.4]))
+        self.assertAlmostEqual(m['rollout30_gap_final'][0], 0.2)
+        self.assertAlmostEqual(m['rollout30_gap_mean'][0], 0.1)
+        self.assertAlmostEqual(m['rollout30_fp_mean'][0], 0.02)
+        self.assertAlmostEqual(m['rollout30_gap_at10'][0], 0.15)
+        self.assertAlmostEqual(d['eval']['points']['cats']['series']['rollout30_gap_final'][0], 0.1)
+        self.assertEqual(d['eval']['latest_rollouts']['mixed']['30']['fp'], [0.01, 0.03])
+        self.assertEqual(d['summary']['last_eval_it'], 10000)
+
     def test_resume_keeps_last_write_and_eval_order_is_not_a_restart(self):
         self.write('run', [train_row(25), train_row(50), eval_row(25), train_row(25, loss=9.0), train_row(50)])
         d = self.metrics('run')
@@ -222,3 +340,12 @@ class TrainingMetricsTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+class DashboardCoreJS(unittest.TestCase):
+    @unittest.skipIf(shutil.which('node') is None, 'node not installed')
+    def test_core_helpers(self):
+        script = os.path.join(os.path.dirname(__file__), 'test_training_core.js')
+        out = subprocess.run(['node', script], capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
