@@ -75,6 +75,7 @@ def _name(k, limit=40):
 @dataclass
 class _Parsed:
     ino: int = -1
+    mtime_ns: int = -1
     offset: int = 0
     train: list = field(default_factory=list)
     evals: list = field(default_factory=list)
@@ -377,8 +378,9 @@ class Store:
                 raise HTTPException(404, f'cannot open metrics: {e.strerror}')
             with os.fdopen(fd, 'rb') as f:
                 st = os.fstat(fd)
-                if st.st_ino != state.ino or st.st_size < state.offset:
-                    state = _Parsed(ino=st.st_ino)
+                # Mirrors insert training rows before the eval suffix; inode/size alone do not prove append-only.
+                if st.st_ino != state.ino or st.st_mtime_ns != state.mtime_ns or st.st_size < state.offset:
+                    state = _Parsed(ino=st.st_ino, mtime_ns=st.st_mtime_ns)
                     if st.st_size > MAX_BYTES:
                         state.offset, state.truncated = st.st_size - MAX_BYTES, True
                         f.seek(state.offset)

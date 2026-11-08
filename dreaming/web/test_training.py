@@ -128,6 +128,44 @@ class TrainingMetricsTest(unittest.TestCase):
         self.assertIn('horizons: 30,120', d['notes']['eval eval_protocol'][0])
         self.assertEqual(d['notes']['eval eval_decode_commit'], ['@5000 94ede5d6'])
 
+    def test_growing_same_inode_rewrite_inserts_train_before_eval(self):
+        path = self.write('run', [train_row(25), eval_row(25)])
+        before = self.metrics('run')
+        previous = os.stat(path)
+        rows = [train_row(25), train_row(50, source='x' * 1000), eval_row(25), eval_row(50)]
+        with open(path, 'w') as f:
+            f.writelines(json.dumps(row) + '\n' for row in rows)
+        os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns + 1_000_000))
+        self.assertEqual(os.stat(path).st_ino, previous.st_ino)
+        self.assertGreater(os.stat(path).st_size, previous.st_size)
+        training.STORE.invalidate()
+        body = self.metrics('run')
+        self.assertEqual(before['train']['it'], [25])
+        self.assertEqual(body['train']['it'], [25, 50])
+        self.assertEqual((body['eval']['rows'], body['skipped_lines'], body['nonfinite_values']), (2, 0, 0))
+        self.assertEqual(body['eval']['points']['mixed']['it'], [25, 50])
+        cached = training.STORE.cache[path]
+        again = self.metrics('run')
+        self.assertIs(training.STORE.cache[path], cached)
+        self.assertEqual((body['train'], body['eval']), (again['train'], again['eval']))
+
+    def test_same_inode_same_size_rewrite_replaces_cached_results(self):
+        old = train_row(25, loss=1.0, source='old')
+        new = dict(old, it=50, loss=2.0, source='new')
+        path = self.write('run', [old])
+        self.metrics('run')
+        previous = os.stat(path)
+        with open(path, 'w') as f:
+            f.write(json.dumps(new) + '\n')
+        os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns + 1_000_000))
+        self.assertEqual((os.stat(path).st_ino, os.stat(path).st_size), (previous.st_ino, previous.st_size))
+        training.STORE.invalidate()
+        body = self.metrics('run')
+        self.assertEqual(body['train']['it'], [50])
+        self.assertEqual(body['train']['series']['loss'], [2.0])
+        self.assertEqual(body['notes']['source'], ['new'])
+        self.assertEqual((body['skipped_lines'], body['restarts']), (0, 0))
+
     def test_pr18_eval_rows_skip_non_result_metadata(self):
         self.write('run', [dict(kind='eval', it=10, metrics=dict(eval_row(10)['metrics'], note='x', protocol=dict(a=1)))])
         d = self.metrics('run')
