@@ -11,6 +11,7 @@ from . import doom as dm
 from .apps import calculator as calc
 
 TASK_EVENTS = {
+    'terminal': ['term_cmd', 'term_error', 'term_fs', 'basic_run', 'basic_done', 'btop_open'],
     'explorer': ['ex_open_folder', 'ex_delete', 'ex_restore', 'ex_empty_trash', 'ex_open_png', 'ex_up', 'ex_select'],
     'paint': ['paint_stroke', 'paint_color', 'paint_save', 'paint_clear'],
     'cards': ['cards_move', 'cards_found', 'cards_flip', 'cards_draw'],
@@ -29,6 +30,7 @@ WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHI
          "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
 BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0,
           'calculator': 1.0}
+BASE_W['terminal'] = 1.2
 
 
 class Driver:
@@ -783,6 +785,118 @@ class Driver:
                 yield from self.task_notepad(type_only=True)
                 return
 
+    def terminal_typo(self, text):
+        word, sep, rest = text.partition(' ')
+        if not word: return text
+        i = self.rng.randrange(len(word))
+        operation = self.rng.randrange(3)
+        if operation == 0 and len(word) > 1:
+            i = min(i, len(word) - 2)
+            word = word[:i] + word[i + 1] + word[i] + word[i + 2:]
+        elif operation == 1 and len(word) > 1:
+            word = word[:i] + word[i + 1:]
+        else:
+            word = word[:i] + word[i] + word[i:]
+        return word + sep + rest
+
+    def task_terminal(self, deep=False):
+        r = self.rng
+        yield from self.open_app('terminal')
+        if self.os.focus != 'terminal': return
+        if self.os.term.mode == 3:
+            yield from self.press_key(KEY_ESC)
+        if self.os.term.basic.running:
+            yield from self.press_key(KEY_ESC)
+        if self.os.term.mode == 1:
+            yield from self.type_text('BYE')
+            yield from self.press_key(KEY_ENTER)
+        def command(text, shell=False):
+            if shell and r.random() < 0.15:
+                text = self.terminal_typo(text)
+            if text and r.random() < 0.1:
+                i = r.randint(1, len(text.split()[0]))
+                yield from self.type_text(text[:i] + r.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
+                yield from self.press_key(KEY_DEL)
+                yield from self.type_text(text[i:])
+            else:
+                yield from self.type_text(text)
+            yield from self.press_key(KEY_ENTER)
+            yield from self.idle(r.randint(1, 5))
+        for _ in range(r.randint(5, 12) if deep else r.randint(2, 5)):
+            if 'terminal' not in self.os.z: return
+            yield from self.ensure_focus('terminal')
+            files = [(p, n) for p, items in self.os.fs.items() for n, k in items if k == 'txt']
+            p, n = r.choice(files) if files else ('C:', 'MISSING.TXT')
+            full = p + '/' + n
+            name = 'TMP' + str(r.randrange(100))
+            commands = ['LS', 'LS ' + r.choice(list(self.os.fs)), 'CD ' + r.choice(list(self.os.fs)),
+                        'CD MISSING', 'CAT ' + full, 'HEAD -3 ' + full, 'TAIL ' + full, 'WC ' + full,
+                        'GREP THE ' + full, 'FIND TXT', 'TREE', 'PWD', 'DATE', 'WHOAMI',
+                        'TOUCH ' + name + '.TXT', 'MKDIR C:/' + name, 'RMDIR C:/' + name,
+                        'CP ' + full + ' C:/' + name + '.TXT', 'MV ' + full + ' ' + name + '.TXT',
+                        'RM ' + full, 'ECHO HELLO DREAM > ' + name + '.TXT', 'CLEAR', 'LSX', 'SL', '']
+            choice = r.random()
+            if choice < 0.18:
+                saved = [p + '/' + n for p, items in self.os.fs.items() for n, k in items
+                         if k == 'txt' and n.endswith('.BAS') and n not in ('STARS.BAS', 'COUNT.BAS')]
+                if r.random() < 0.3:
+                    target = r.choice(saved) if saved and r.random() < 0.6 else 'C:/GAMES/STARS.BAS'
+                    yield from command('RUN ' + target)
+                else:
+                    yield from command('BASIC')
+                    if self.os.term.mode != 1: continue
+                    v, char = r.randint(5, 15), r.choice('!>_.-ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+                    multiplier, divisor = r.randint(2, 9), r.randint(2, 5)
+                    templates = [
+                        [f'10 FOR I 1 TO {v}', '20 PRINT I', '30 NEXT I'],
+                        [f'10 FOR I 1 TO {v}', f'20 RPT I {char}', '30 NEXT I'],
+                        [f'10 FOR I 1 TO {v}', f'20 RPT I MUL 2 SUB 1 {char} {v} SUB I', '30 NEXT I'],
+                        [f'10 FOR I 1 TO {v}', f'20 RPT I MUL 2 SUB 1 {char} {v} SUB I', '30 NEXT I',
+                         f'40 FOR I {v - 1} TO 1 STEP -1', f'50 RPT I MUL 2 SUB 1 {char} {v} SUB I', '60 NEXT I'],
+                        [f'10 LET I {v}', '20 PRINT I', '30 LET I I SUB 1', '40 IF I GT 0 THEN 20'],
+                        [f'10 FOR I 1 TO {multiplier}', f'20 FOR J 1 TO {v}', '30 PRINT I MUL J',
+                         '40 NEXT J', '50 NEXT I'],
+                        [f'10 FOR I 1 TO {v}', f'20 IF I MOD {divisor} EQ 0 THEN 50', '30 PRINT I',
+                         '40 GOTO 60', '50 PRINT FIZZ', '60 NEXT I'],
+                        [f'10 FOR I 1 TO {v * 3}', f'20 RPT I MOD {divisor} ADD 1 {char}', '30 NEXT I'],
+                        [f'10 PRNT {v}'], ['10 NEXT I'], [f'10 GOTO {v * 10}'],
+                        [f'10 PRINT {v} DIV 0'], [f'10 RPT {v} {char}', '20 GOTO 10']]
+                    yield from command('NEW')
+                    program = r.choice(templates)
+                    for line in program:
+                        if 'PRINT ' in line and r.random() < 0.25:
+                            yield from command(line.replace('PRINT ', 'PRNT ', 1))
+                        yield from command(line)
+                    if r.random() < 0.4: yield from command('LIST')
+                    yield from command('RUN')
+                yield from self.idle(r.randint(20, 100))
+                if self.os.term.basic.running: yield from self.press_key(KEY_ESC)
+                if self.os.term.mode == 1:
+                    if r.random() < 0.5:
+                        yield from command('LIST')
+                        yield from command('SAVE ' + name + '.BAS')
+                    yield from command('BYE')
+            elif choice < 0.3:
+                yield from command('BTOP')
+                yield from self.idle(r.randint(20, 120))
+                yield from self.press_key(KEY_ESC if r.random() < 0.5 else KEY_CHAR0 + CHAR_IDX['Q'])
+            elif choice < 0.4:
+                yield from self.type_text('LSX')
+                yield from self.press_key(KEY_DEL)
+                yield from self.press_key(KEY_ENTER)
+                yield from self.press_key(KEY_UP)
+                yield from self.press_key(KEY_ENTER)
+            else:
+                yield from command(r.choice(commands), shell=True)
+            if 'explorer' in self.os.z and r.random() < 0.15:
+                yield from self.ensure_focus('explorer')
+                yield from self.type_text('LS')
+        if 'terminal' in self.os.z and r.random() < 0.35:
+            yield from self.ensure_focus('terminal')
+            if r.random() < 0.33: yield from command('EXIT')
+            elif r.random() < 0.5: yield from self.press_key(KEY_ESC)
+            else: yield from self.close('terminal')
+
     def task_noise(self):
         r = self.rng
         for _ in range(r.randint(1, 5)):
@@ -935,7 +1049,8 @@ class Driver:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
                             'windows': self.task_windows_deep,
-                            'calculator': lambda: self.task_calculator(deep=True)}[self.mode]()
+                            'calculator': lambda: self.task_calculator(deep=True),
+                            'terminal': lambda: self.task_terminal(deep=True)}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
             task = self.choose_task()
