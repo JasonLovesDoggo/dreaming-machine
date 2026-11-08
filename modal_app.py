@@ -70,12 +70,14 @@ def regen_all(wipe: bool = False, mixed_steps: int = 40_000_000, containers: int
 
 
 def _train(args: str, gpus: int, dist_args=(), commit=True):
-    import subprocess, shlex
+    import subprocess
+    import shlex
     cmd = ['torchrun', f'--nproc_per_node={gpus}', *dist_args, '-m', 'dreaming.train', '--data', DATA] + shlex.split(args)
     print(' '.join(cmd), flush=True)
     smi = subprocess.Popen(['nvidia-smi', '--query-gpu=index,utilization.gpu,memory.used', '--format=csv,noheader', '-l', '15'])
     p = subprocess.Popen(cmd)
-    import threading, time
+    import threading
+    import time
     def committer():
         while commit and p.poll() is None:
             time.sleep(300)
@@ -154,4 +156,5 @@ def web():
     from dreaming.web import create_app
     from dreaming.web.telemetry import configure_modal
     configure_modal(vol)
-    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', device='cuda', runs_dir=RUNS, metrics_refresh=vol.reload)
+    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', ckpt_root=RUNS, ckpt_refresh=vol.reload,
+                      device='cuda', runs_dir=RUNS, metrics_refresh=vol.reload)

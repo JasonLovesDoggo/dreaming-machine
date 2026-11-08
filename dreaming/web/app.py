@@ -1,4 +1,5 @@
 import os
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -10,17 +11,19 @@ from .neural import CHECKPOINTS
 from .settings import SETTINGS
 
 STATIC = os.path.join(os.path.dirname(__file__), 'static')
+log = logging.getLogger(__name__)
 
 
 def _page(name):
     return lambda: FileResponse(os.path.join(STATIC, name))
 
 
-def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, runs_dir=None, metrics_refresh=None):
+def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, ckpt_root=None, ckpt_refresh=None,
+               runs_dir=None, metrics_refresh=None):
     if data_dir:
         SETTINGS.data_dir = data_dir
     if ckpt_dir:
-        CHECKPOINTS.configure(ckpt_dir, device, ckpt_name)
+        CHECKPOINTS.configure(ckpt_dir, device, ckpt_name, run_root=ckpt_root)
     if runs_dir or metrics_refresh:
         training.configure(runs_dir, metrics_refresh)
 
@@ -36,6 +39,11 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, runs_
 
     @app.get('/config')
     def config():
+        if ckpt_refresh:
+            try:
+                ckpt_refresh()
+            except Exception:
+                log.exception('could not refresh checkpoint volume')
         return JSONResponse(dict(pal=PAL.tolist(), charset=CHARSET, extra_keys=EXTRA_KEYS, key_extra0=KEY_EXTRA0, sections=atlas.sections_json(),
                                  ckpts=CHECKPOINTS.names(), current=CHECKPOINTS.current))
 

@@ -301,6 +301,9 @@ def save_checkpoint(a, model, opt, cfg, it, b, amp):
     ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it, opt=opt.state_dict(), args=vars(a))
     torch.save(ck, os.path.join(a.out, 'ckpt.pt'))
     torch.save(ck, os.path.join(a.out, f'ckpt_{it:06d}.pt'))
+    with open(os.path.join(a.out, 'run.json.tmp'), 'w') as f:
+        json.dump(dict(atlas_version=2, iter=it), f)
+    os.replace(os.path.join(a.out, 'run.json.tmp'), os.path.join(a.out, 'run.json'))
     model.eval()
     with amp:
         save_rollout_png(os.path.join(a.out, f'rollout_{it:06d}.png'), model, b, model.init_memory(b['grid'].shape[0]),
