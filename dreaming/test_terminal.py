@@ -1,5 +1,5 @@
 """Terminal shell and rendering regression checks."""
-from .os_sim import MicroOS, APP_SLOTS, DESK_ICONS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB, text_ids
+from .os_sim import MicroOS, APPS, APP_SLOTS, DESK_ICONS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB, text_ids
 from .tiles import ATLAS, BLUE, CHARSET, NEO_LOGO, VOCAB
 
 
@@ -83,7 +83,7 @@ def test_neofetch():
     assert events == ['neofetch']
     output = o.term.lines[-11:]
     assert output[0] == (0, 'DREAMER/DREAMING')
-    assert 'UPTIME: 42 MIN' in output and 'APPS: 1' in output
+    assert 'UPTIME: 42 MIN' in output and f'APPS: {len(APPS)}' in output
     for line in output:
         text = line[1] if isinstance(line, tuple) else line
         assert len(text) <= (20 if isinstance(line, tuple) else 36)
@@ -116,6 +116,16 @@ def test_neofetch():
     command(o, 'HELP')
     assert any('NEOFETCH' in line for line in o.term.lines)
     assert not any('-WAKE' in line for line in o.term.lines)
+
+
+def test_neofetch_counts_installed_apps():
+    o = MicroOS(42)
+    o.open_app('terminal')
+    o.term.command('NEOFETCH', [])
+    assert o.term.lines[-1] == f'APPS: {len(APPS)}'
+    o.open_app('paint')
+    o.term.command('NEOFETCH', [])
+    assert o.term.lines[-1] == f'APPS: {len(APPS)}'
 
 
 if __name__ == '__main__':

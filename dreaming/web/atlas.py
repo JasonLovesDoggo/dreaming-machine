@@ -5,8 +5,10 @@ import numpy as np
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from .. import doom as dm
+from ..apps import flight as fl
 from ..os_sim import MicroOS
-from ..tiles import ATLAS, T
+from ..driver import Driver
+from ..tiles import ATLAS, T, grid_to_pixels
 from .images import png
 
 router = APIRouter(prefix='/sprites')
@@ -83,3 +85,16 @@ def _doom_sheet():
 @router.get('/doom')
 def doom_sheet():
     return png(_doom_sheet(), 2)
+
+
+@router.get('/flight')
+def flight_sheet():
+    sim = MicroOS(7)
+    sim.open_app('flight')
+    driver = Driver(sim, 7, 'flight')
+    frames = []
+    for i in range(230):
+        sim.step(next(driver.stream))
+        if i in (25, 90, 155, 220):
+            frames.append(_pad(grid_to_pixels(fl.render_tiles(sim.flight))))
+    return png(_hcat(frames), 2)
