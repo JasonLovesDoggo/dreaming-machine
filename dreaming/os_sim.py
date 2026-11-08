@@ -326,10 +326,8 @@ class MicroOS:
             elif key == KEY_DOWN:
                 self.chat.scroll = max(0, self.chat.scroll - 1)
             elif KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.chat.input) < 160:
-                candidate = self.chat.input + CHARSET[key - KEY_CHAR0]
-                if not dreamer.held_out_multiplication(candidate):
-                    self.chat.input = candidate
-                    events.append('dreamer_type')
+                self.chat.input += CHARSET[key - KEY_CHAR0]
+                events.append('dreamer_type')
         elif app == 'notepad':
             if KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.np_text) < NP_MAX:
                 self.np_text += CHARSET[key - KEY_CHAR0]

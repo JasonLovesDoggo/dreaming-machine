@@ -9,9 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from .apps.dreamer import Corpus, Chat, corpus, load_corpus, normalize, reply
+from .apps.dreamer import FALLBACKS, Corpus, Chat, corpus, load_corpus, normalize, reply
 from .apps import dreamer
-from .apps.dreamer import held_out_multiplication
 from .apps.dreamer_persona import MODEL, SYSTEM_PROMPT
 from .dataset import run_episode
 from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_DEL, KEY_UP, KEY_DOWN, KEY_PLUS, KEY_TIMES, KEY_EQUALS, STATE_VOCAB
@@ -22,7 +21,7 @@ def test_corpus_and_replies():
     pairs = corpus().pairs
     assert len(pairs) >= 30000
     assert reply('', 3, 0) == ''
-    assert reply('ZZZZ', 3, 0) in pairs.values()
+    assert reply('ZZZZ', 3, 0) in FALLBACKS
     for prompt, answer in pairs.items():
         assert reply(prompt, 7, 0) == answer
         assert answer == normalize(answer)
@@ -32,10 +31,10 @@ def test_corpus_and_replies():
 def test_retrieval_and_errors(tmp_path):
     small = Corpus({'HELLO WORLD': 'HELLO!', 'HOW ARE YOU': 'WELL.', 'HI CAT': 'MEOW.'})
     assert small.reply('hello world?', 1) == 'HELLO!'
-    assert small.reply('HELLO WROLD', 1) == 'HELLO!'
-    assert small.reply('XYZ', 1) == small.reply('XYZ', 1)
+    assert small.reply('HELO WORLD', 1) == small.reply('HELLO WORL', 1) == 'HELLO!'
+    assert small.reply('XYZ', 1) == small.reply('XYZ', 1) in FALLBACKS
     assert small.reply('', 1) == ''
-    assert small.reply('!!!', 1) in small.pairs.values()
+    assert small.reply('!!!', 1) in FALLBACKS
     with pytest.raises(ValueError):
         Corpus({})
     with pytest.raises(FileNotFoundError):
@@ -112,7 +111,7 @@ def test_identity_repair_tool(monkeypatch, tmp_path, case):
     assert result['pairs']['HELLO'] == 'HELLO!'
     assert result['identity_repair']['complete']
     assert result['filtered_x24_pairs'] == 2
-    assert all(not held_out_multiplication(p) and not held_out_multiplication(a)
+    assert all(not script['held_out_multiplication'](p) and not script['held_out_multiplication'](a)
                for p, a in result['pairs'].items())
     if case == 'normal':
         assert result['pairs']['ARE YOU CHATGPT'] == 'I AM THE DREAMER. NOT CHATGPT.'
@@ -123,42 +122,32 @@ def test_identity_repair_tool(monkeypatch, tmp_path, case):
     assert len(calls) == (case != 'empty')
 
 
-@pytest.mark.parametrize('text', ['24 TIMES 2', '2 X 24', '24X7', '2*24', '24 * 2',
-                                 '24\u00d72', 'TWENTY-FOUR TIMES SIX', 'MULTIPLY 3 BY 24',
-                                 'THE PRODUCT OF 24 AND 5', 'DOUBLE 24', 'TWICE TWENTY FOUR'])
-def test_held_out_forms(text):
-    assert held_out_multiplication(text)
-    assert reply(text, 1) == ''
+def test_chat_accepts_24_multiplication():
+    for text in ('24 X 3', 'OPEN 24 BY 7'):
+        os = MicroOS(0)
+        os.open_app('dreamer')
+        for char in text:
+            os.step((0, 0, 0, KEY_CHAR0 + CHAR_IDX[char]))
+        assert os.chat.input == text
+        obs = os.step((0, 0, 0, KEY_ENTER))
+        assert 'dreamer_send' in obs['events']
+        assert os.chat.messages[-2] == ('body', text)
+        assert os.chat.pending
+    assert Corpus({'24 X 3': '72.'}).reply('24 X 3') == '72.'
 
 
-def test_held_out_input_corpus_and_live_reply(monkeypatch, tmp_path):
-    for text in ('', '24 HOURS', '48/24', '24 PLUS 5', '6 TIMES 4', '124 TIMES 2'):
-        assert not held_out_multiplication(text)
-    pairs = {'HELLO': 'HELLO!', '24 X 2': '48', 'MULTIPLY 2 BY 24': '48', 'BAD': '3*24 IS 72'}
-    small = Corpus(pairs)
-    assert small.pairs == {'HELLO': 'HELLO!'}
-    with pytest.raises(ValueError):
-        Corpus({'24 TIMES 2': '48'})
-    assert all(not held_out_multiplication(p) and not held_out_multiplication(a)
-               for p, a in corpus().pairs.items())
-    os = MicroOS(0)
-    os.open_app('dreamer')
-    for char in 'WHAT IS 17 TIMES 24':
-        os.step((0, 0, 0, KEY_CHAR0 + CHAR_IDX[char]))
-        assert not held_out_multiplication(os.chat.input)
-    assert os.chat.input != 'WHAT IS 17 TIMES 24'
-    os.chat.input = '24 TIMES 2'
-    assert not os.chat.send(0, 0)
-    monkeypatch.setattr(dreamer, 'corpus', lambda: small)
-    monkeypatch.setenv('DREAMER_LIVE', '1')
-    path = tmp_path / 'live.jsonl'
-    path.write_text(json.dumps({'prompt': 'NEW', 'answer': '24 TIMES 3 IS 72'}) + '\n')
-    monkeypatch.setenv('DREAMER_CACHE', str(path))
-    monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(OpenAI=lambda **kwargs:
-        SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(output_text='3*24 IS 72')))))
-    before = path.read_text()
-    assert reply('NEW', 1) == 'HELLO!'
-    assert path.read_text() == before
+def test_fallback_for_off_script_prompts():
+    pairs = corpus().pairs
+    assert 20 <= len(FALLBACKS) <= 50 and len(set(FALLBACKS)) == len(FALLBACKS)
+    assert all(f == normalize(f) for f in FALLBACKS)
+    assert not set(FALLBACKS) & set(pairs.values())
+    assert reply('WHERE DID I PUT MY KEYS', 3) == pairs['WHERE DID I PUT MY KEYS LOL']
+    assert reply('EXPLAIN THE OFSFIDE RULE IN SOCCER SIMPLY.', 3) == pairs['EXPLAIN THE OFFSIDE RULE IN SOCCER SIMPLY.']
+    assert reply('DO PENGUINS HAVE KNEES!!!', 3) == pairs['DO PENGUINS HAVE KNEES']
+    for prompt in ('CAN YOU EXPLAIN QUANTUM CHROMODYNAMICS', 'HOW TALL IS MOUNT KILIMANJARO', 'Q7 ZZ 9KX'):
+        assert reply(prompt, 3) in FALLBACKS
+        assert reply(prompt, 3) == reply(prompt, 3)
+    assert len({reply(f'XQZ {i}', 0) for i in range(200)}) > 15
 
 
 def test_chat_empty_busy_and_history():
@@ -248,12 +237,12 @@ def test_live_empty_error_and_default_off(monkeypatch, tmp_path):
         raise AssertionError('Default path touched live mode')
 
     monkeypatch.setattr(dreamer, 'live_reply', unexpected)
-    assert reply('NOVEL PROMPT', 1) == 'HELLO!'
+    assert reply('NOVEL PROMPT', 1) in FALLBACKS
     assert not calls
     assert not path.exists()
     monkeypatch.setenv('DREAMER_LIVE', '1')
     assert reply('', 1) == ''
-    assert reply('NOVEL PROMPT', 1) == 'HELLO!'
+    assert reply('NOVEL PROMPT', 1) in FALLBACKS
     assert calls == ['NOVEL PROMPT']
     assert not path.exists()
 
