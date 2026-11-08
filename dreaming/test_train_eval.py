@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from .eval import HELDOUT_SEED_BASE, evaluate_mode, heldout_paths
+from .eval import HELDOUT_SEED_BASE, changed_transition_counts, evaluate_mode, false_change_counts, heldout_paths
 from .model import Config, WorldModel
 from .os_sim import STATE_VOCAB
 from .tiles import ATLAS
@@ -128,3 +128,59 @@ def test_sync_metrics_and_eval():
     assert len(result['rollouts']['2']['acc_per_step']) == 2
     with pytest.raises(ValueError, match='positive'):
         evaluate_mode(model, d, 'cpu', windows=0)
+
+
+def test_false_change_counts():
+    previous = torch.tensor([1, 2, 3, 4])
+    truth = torch.tensor([1, 2, 8, 4])
+    predicted = torch.tensor([1, 9, 7, 4])
+    assert false_change_counts(predicted, truth, previous) == (1, 3)
+    assert false_change_counts(previous, truth, previous) == (0, 3)
+    assert false_change_counts(previous, previous + 1, previous) == (0, 0)
+
+
+def test_changed_transition_sizes():
+    previous = torch.zeros(3, 20, dtype=torch.long)
+    truth = previous.clone()
+    truth[0, :2] = 1
+    truth[1] = 1
+    predicted = previous.clone()
+    predicted[0, 0] = 1
+    predicted[1, :5] = 1
+    assert changed_transition_counts(predicted, truth, previous) == dict(
+        small_correct=1, small_tiles=2, small_frames=1,
+        large_correct=5, large_tiles=20, large_frames=1)
+
+
+def test_rollout_false_changes_steps_and_frame_dump(tmp_path):
+    from PIL import Image
+    torch.set_num_threads(1)
+    d = dataset()
+    d = {k: np.repeat(v[:1], 140, axis=0) for k, v in d.items() if k != 'ep_len'}
+    d['ep_len'] = np.array([140])
+    real = WorldModel(Config(d=8, layers=1, heads=1, mem=2)).eval()
+    b = to_torch(Windows(d, 1, np.random.default_rng(0)).batch(1), 'cpu')
+    with torch.no_grad():
+        out, _ = real({k: v[:, 0] for k, v in b.items()}, real.init_memory(1))
+    out['grid'] = torch.full_like(out['grid'], -10)
+    out['grid'][..., ATLAS.used[1]] = 10
+    out['m_gun'][:, 0] = 100
+    class FixedPredictions:
+        def init_memory(self, batch):
+            return real.init_memory(batch)
+
+        def __call__(self, x, mem):
+            return out, mem
+    result = evaluate_mode(FixedPredictions(), d, 'cpu', windows=1, batch=1, starts=1,
+                           horizons=(100,), dump_frames=str(tmp_path))
+    assert result['fp_change_rate'] == 1
+    assert result['copy_last_fp_change_rate'] == 0
+    assert result['acc_changed_small'] == result['acc_changed_large'] == 0
+    assert result['changed_small_frames'] == result['changed_large_frames'] == 0
+    rollout = result['rollouts']['100']
+    assert rollout['fp_change_rate_per_step'] == [1.0] * 100
+    assert rollout['copy_last_fp_change_rate_per_step'] == [0.0] * 100
+    assert rollout['acc_at_steps'] == {'10': 0, '50': 0, '100': 0}
+    assert rollout['copy_first_acc_at_steps'] == {'10': 1, '50': 1, '100': 1}
+    with Image.open(tmp_path / 'start_00.png') as image:
+        assert image.size == (512, 4 * (192 + 18))

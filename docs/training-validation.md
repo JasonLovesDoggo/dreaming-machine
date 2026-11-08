@@ -57,3 +57,29 @@ changed accuracy and `changed_tiles=0` rather than NaN. Reduce `--windows`,
 `--starts`, and `--horizons` for CPU smoke checks.
 
 Tests: `OMP_NUM_THREADS=1 python -m pytest dreaming/test_train_eval.py -q`.
+
+## False changes and frame strips
+
+Evaluation also reports `fp_change_rate`: among tiles whose ground-truth value did
+not change, the fraction predicted different from the previous true value.
+Rollouts report this per step using **previous ground truth**, not previous model
+predictions, as the reference; zero eligible unchanged tiles report zero with
+the denominator exposed. The copy-last-true-frame FP baseline is always zero.
+Existing copy-first-frame rollout accuracy remains a separate baseline (it is
+not the zero-FP baseline after the real trajectory changes).
+
+Rollout records explicitly expose `acc_at_steps` and `copy_first_acc_at_steps`
+at 10/50/100 when covered by the horizon. Defaults remain 30/120, covering step 100.
+`--dump-frames DIR` writes `DIR/<mode>/start_00.png` through `start_02.png` for
+the longest horizon. Rows are steps 0/10/50/100 that the horizon covers; each row
+labels prediction on the left and truth on the right. Step 0 is the shared initial
+observation. These strips use the simulator renderer, including cursor and Doom
+observations, and do not alter training or simulator state.
+
+Teacher-forced changed-tile accuracy is also split by transition size:
+`acc_changed_small` covers frames with 1–16 changed cells, while
+`acc_changed_large` covers frames with >16 changed cells. Both are micro-averaged
+over the eligible changed cells (not frame averages); `changed_small_tiles`,
+`changed_small_frames`, `changed_large_tiles`, and `changed_large_frames` expose
+the corresponding denominators. Static frames belong to neither category;
+empty categories report zero accuracy with zero counts.
