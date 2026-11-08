@@ -2,7 +2,7 @@
 import math
 import random
 from collections import Counter
-from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, KEY_UP, KEY_DOWN,
+from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, DCLICK_STEPS, KEY_UP, KEY_DOWN,
                      KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
 from .tiles import CHAR_IDX
 from .pictures import KEYWORDS, IMAGE_EXTS
@@ -54,7 +54,7 @@ class Driver:
                 self.y = min(max(self.y + self.rng.randint(-1, 1), 0), SCREEN_H - 1)
             yield self.act()
 
-    def move_to(self, tx, ty, speed=None):
+    def move_to(self, tx, ty, speed=None, straight=False):
         r = self.rng
         tx, ty = min(max(int(tx), 0), SCREEN_W - 1), min(max(int(ty), 0), SCREEN_H - 1)
         x0, y0 = self.x, self.y
@@ -63,9 +63,9 @@ class Driver:
             return
         speed = speed or r.uniform(6, 22)
         n = int(min(max(dist / speed, 2), 30))
-        overshoot = r.random() < 0.2 and dist > 40
+        overshoot = not straight and r.random() < 0.2 and dist > 40
         ex, ey = (tx + (tx - x0) * 0.08, ty + (ty - y0) * 0.08) if overshoot else (tx, ty)
-        bend = r.uniform(-0.25, 0.25) * dist
+        bend = 0 if straight else r.uniform(-0.25, 0.25) * dist
         nx, ny = -(ty - y0) / dist, (tx - x0) / dist
         cx, cy = (x0 + ex) / 2 + nx * bend, (y0 + ey) / 2 + ny * bend
         for i in range(1, n + 1):
@@ -73,7 +73,7 @@ class Driver:
             s = s * s * (3 - 2 * s)
             bx = (1 - s) ** 2 * x0 + 2 * (1 - s) * s * cx + s * s * ex
             by = (1 - s) ** 2 * y0 + 2 * (1 - s) * s * cy + s * s * ey
-            jitter = 1 if i < n else 0
+            jitter = 1 if i < n and not straight else 0
             self.x = min(max(int(round(bx)) + r.randint(-jitter, jitter), 0), SCREEN_W - 1)
             self.y = min(max(int(round(by)) + r.randint(-jitter, jitter), 0), SCREEN_H - 1)
             yield self.act()
@@ -94,11 +94,11 @@ class Driver:
             yield self.act()
         yield from self.idle(self.rng.randint(0, 3))
 
-    def drag(self, x0, y0, x1, y1, speed=None):
+    def drag(self, x0, y0, x1, y1, speed=None, straight=False):
         yield from self.move_to(x0, y0)
         self.btn = 1
         yield self.act()
-        yield from self.move_to(x1, y1, speed=speed or self.rng.uniform(4, 12))
+        yield from self.move_to(x1, y1, speed=speed or self.rng.uniform(4, 12), straight=straight)
         yield self.act()
         self.btn = 0
         yield self.act()
@@ -215,11 +215,8 @@ class Driver:
                 if self.os.focus == 'notepad':
                     yield from self.task_notepad(type_only=True)
                     return
-            elif p < 0.5 and self.os.ex_sel >= 0:
-                if r.random() < 0.6:
-                    yield from self.click(*self.tile_xy(wc + 6, wr + 1, 2 * T))
-                else:
-                    yield from self.press_key(KEY_DEL)
+            elif p < 0.5:
+                yield from self.delete_file()
             elif p < 0.6:
                 yield from self.click(*self.tile_xy(wc + 1, wr + 1))
             elif p < 0.68 and trash and self.os.ex_sel >= 0:
@@ -242,6 +239,23 @@ class Driver:
             else:
                 yield from self.click(*self.tile_xy(wc + r.randint(1, w - 2), wr + r.randint(2, h - 2)))
             yield from self.idle(r.randint(0, 6))
+
+    def delete_file(self):
+        r = self.rng
+        items = self.os.fs[self.os.ex_path]
+        files = [i for i, (_, kind) in enumerate(items) if kind != 'folder']
+        if not files:
+            return
+        wc, wr, w, h = self.win('explorer')
+        i = r.choice(files)
+        yield from self.idle(DCLICK_STEPS + 1)
+        yield from self.click((wc + 2) * T + r.randint(2, 60), (wr + 2 + i) * T + 4)
+        if self.os.focus != 'explorer':
+            yield from self.ensure_focus('explorer')
+        if r.random() < 0.6:
+            yield from self.click(*self.tile_xy(wc + 6, wr + 1, 2 * T))
+        else:
+            yield from self.press_key(KEY_DEL)
 
     def shape_cells(self):
         r = self.rng
@@ -297,7 +311,9 @@ class Driver:
             yield from self.ensure_focus('paint')
             wc, wr, w, h = self.win('paint')
             p = r.random()
-            if p < 0.25:
+            if p < 0.15:
+                yield from self.paint_repeat()
+            elif p < 0.35:
                 yield from self.click(*self.tile_xy(wc + 1 + r.randrange(8), wr + 1))
             elif p < 0.85:
                 pts = [(min(max(x, 0), CANVAS_W - 1), min(max(y, 0), CANVAS_H - 1)) for x, y in self.shape_cells()]
@@ -318,6 +334,28 @@ class Driver:
             yield from self.idle(r.randint(0, 4))
         if r.random() < 0.3:
             yield from self.close('paint')
+
+    def paint_repeat(self):
+        r = self.rng
+        wc, wr, w, h = self.win('paint')
+        kind = r.choice(['dot', 'tool', 'clear', 'save'])
+        if kind == 'dot':
+            if self.os.pt_color == 0:
+                yield from self.click(*self.tile_xy(wc + 1 + r.randrange(1, 8), wr + 1))
+            cells = [(x, y) for y in range(CANVAS_H) for x in range(CANVAS_W)
+                     if self.os.pt_canvas[y, x] == self.os.pt_color]
+            x, y = r.choice(cells) if cells else (r.randrange(CANVAS_W), r.randrange(CANVAS_H))
+            xy = ((wc + 1) * T + x * 4 + 2, (wr + 2) * T + y * 4 + 2)
+        elif kind == 'tool':
+            xy = self.tile_xy(wc + 1 + r.randrange(8), wr + 1)
+        elif kind == 'clear':
+            xy = self.tile_xy(wc + 10, wr + 1, 3 * T)
+        else:
+            if self.os.pt_file is None and len(self.os.fs['C:/PICS']) >= 9:
+                return
+            xy = self.tile_xy(wc + 14, wr + 1, 2 * T)
+        for _ in range(r.randint(2, 4)):
+            yield from self.click(*xy)
 
     def card_xy(self, where, k=0, j=0):
         wc, wr, w, h = self.win('cards')
@@ -368,6 +406,29 @@ class Driver:
                     moves.append((3, ('waste',), ('tab', k2)))
         return moves
 
+    def cards_cardinal(self):
+        r, o = self.rng, self.os
+        wc, wr, w, h = self.win('cards')
+        if o.c_sel:
+            yield from self.click((wc + w - 1) * T + 4, (wr + h - 1) * T + 4)
+        singles, stacks = [], []
+        for k, col in enumerate(o.tab):
+            off, n = o._tab_visible(k)
+            for j in range(off, n):
+                if col[j][1]:
+                    (singles if j == n - 1 else stacks).append(('tab', k, j))
+        sources = [s for s in [singles, stacks, [('waste',)] if o.waste else []] if s]
+        if not sources:
+            return
+        src = r.choice(r.choice(sources))
+        x, y = self.card_xy(*src)
+        dx, dy = r.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+        room = SCREEN_W - 1 - x if dx > 0 else x if dx < 0 else SCREEN_H - 1 - y if dy > 0 else y
+        dist = min(r.randint(12, 56), room)
+        # A recent click on this card must not turn the drag into an auto-foundation double-click.
+        yield from self.idle(DCLICK_STEPS + 1)
+        yield from self.drag(x, y, x + dx * dist, y + dy * dist, straight=True)
+
     def task_cards(self, full=False):
         r = self.rng
         yield from self.open_app('cards')
@@ -394,7 +455,9 @@ class Driver:
                     yield from self.open_app('cards')
                     idle_draws, last = 0, None
                     continue
-            if r.random() < (0.02 if full else 0.08) or (not moves and r.random() < 0.1):
+            if not full and r.random() < 0.12:
+                yield from self.cards_cardinal()
+            elif r.random() < (0.02 if full else 0.08) or (not moves and r.random() < 0.1):
                 k = r.randrange(7)
                 yield from self.click(*self.card_xy('tab', k, max(0, len(o.tab[k]) - 1)))
                 yield from self.click(*self.card_xy('tab', r.randrange(7), 0))
@@ -621,7 +684,10 @@ class Driver:
             if self.os.ex_sel < 0 or r.random() < 0.1:
                 continue
             i = self.os.ex_sel
-            yield from self.click((wc + 2) * T + r.randint(2, 50), (wr + 2 + i) * T + r.randint(1, 6), double=True)
+            if r.random() < 0.5:
+                yield from self.press_key(KEY_ENTER)
+            else:
+                yield from self.click((wc + 2) * T + r.randint(2, 50), (wr + 2 + i) * T + r.randint(1, 6), double=True)
             if self.os.focus == 'paint':
                 while 'paint' in self.os.z and self.os.pt_load < 10:
                     yield from self.idle(1)
