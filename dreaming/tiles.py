@@ -1,5 +1,6 @@
 """Fixed tile atlas: every 8x8 tile the OS can ever draw, with stable integer IDs."""
 import numpy as np
+from .flight_art import flight_tiles
 
 T = 8
 GW, GH = 32, 24
@@ -74,6 +75,7 @@ TEXT_CTX = {
     'title': (WHITE, NAVY), 'title_in': (LGRAY, DGRAY), 'body': (K, WHITE), 'sel': (WHITE, BLUE),
     'tool': (K, LGRAY), 'desk': (WHITE, TEAL), 'hud': (RED, K), 'term': (GREEN, K),
     'dreamer': (WHITE, NAVY),
+    'flight': (GREEN, K),
 }
 CTX_NAMES = list(TEXT_CTX)
 
@@ -130,6 +132,8 @@ MINI_ART = {
     'png': ["........", ".kkkkkk.", ".kssysk.", ".ksssGk.", ".kGsGGk.", ".kGGGGk.", ".kkkkkk.", "........"],
     'exe': ["........", ".kkkkkk.", ".krrrrk.", ".kkkkkk.", ".kwwwwk.", ".kwwwwk.", ".kkkkkk.", "........"],
 }
+
+ICON_ART['flight'] = [".......ww.......", ".......ww.......", "......wwww......", "..wwwwwwwwwwww..", "wwwwwwwwwwwwwwww", "......wwww......", "......wwww......", ".....wwwwww....."] * 2
 
 
 # Stable tile-ID layout: every section owns a fixed ID range with spare room, so adding icons, apps or text
@@ -309,6 +313,23 @@ def build_atlas():
             A.add(('neo_logo', r, c), tile)
     A.__exit__()
     n_static = A.ranges[('core',)][1]
+    unique, aliases = [], {}
+    for key, tile in flight_tiles():
+        data = tile.tobytes()
+        if data not in aliases:
+            aliases[data] = len(unique)
+            unique.append((key, tile))
+    assert len(unique) <= 512
+    ids = []
+    with A.section('app_flight'):
+        for key, tile in unique[:256]:
+            ids.append(A.add(key, tile))
+    # Flight owns at most the first 256 IDs of app_spare (2304..2559).
+    with A.section('app_spare'):
+        for key, tile in unique[256:]:
+            ids.append(A.add(key, tile))
+    for key, tile in flight_tiles():
+        A.ids[key] = ids[aliases[tile.tobytes()]]
     # text: char pairs per context
     assert len(TEXT_CTX) <= TEXT_SLOTS and NCH * NCH <= TEXT_STRIDE
     for slot, (ctx, (fg, bg)) in enumerate(TEXT_CTX.items()):
