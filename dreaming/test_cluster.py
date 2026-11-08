@@ -31,6 +31,184 @@ def test_schedule():
             restart_lr(5000, a, r, w, m)
 
 
+@pytest.mark.parametrize('sampler_v2', [False, True])
+def test_picture_banks(tmp_path, monkeypatch, sampler_v2):
+    from dreaming import train
+    from dreaming.picture_bank import install_picture_bank
+    primary, cats = tmp_path / 'primary', tmp_path / 'cats'
+    pictures = [tmp_path / 'train' / f'part_{i:02d}' for i in range(2)]
+    for path in [primary, cats, *pictures]:
+        path.mkdir(parents=True)
+    for path, value, count in [(primary, 10, 1), (cats, 20, 2), *[(p, 30, 1) for p in pictures]]:
+        for i in range(count):
+            data = dataset()
+            data['cursor'][:] = value
+            np.savez(path / f'shard_mixed_001_{i:05d}.npz', **data)
+    args = SimpleNamespace(data=str(primary), extra_data=str(cats), extra_frac=.15,
+                           extra_shards=40, batch=32, unroll=2, sampler_v2=sampler_v2,
+                           holdout_episodes=1, max_steps_data=0, mode_mix=None)
+    original = train.load_data
+    baseline = original(args, 0, 1).batch(32)
+    assert (baseline['cursor'][:, 0, 0] == 20).sum() == 5
+    monkeypatch.setattr(train, 'load_data', original)
+    install_picture_bank(train, ','.join(map(str, pictures)), .15)
+    for rank in (0, 1):
+        sampler = train.load_data(args, rank, 2)
+        assert len(sampler.pictures.d['action']) == 80
+        batch = sampler.batch(32)
+        assert set(batch) == set(baseline)
+        assert {key: value.shape for key, value in batch.items()} == {key: value.shape for key, value in baseline.items()}
+        assert [(batch['cursor'][:, 0, 0] == value).sum() for value in (10, 20, 30)] == [22, 5, 5]
+    monkeypatch.setattr(train, 'load_data', original)
+    install_picture_bank(train, ','.join(map(str, pictures)), .15, holdout_episodes=1)
+    assert len(train.load_data(args, 0, 1).pictures.d['action']) == 40
+    args.extra_data = ''
+    with pytest.raises(ValueError, match='extra-data'):
+        train.load_data(args, 0, 1)
+
+
+def test_picture_paths_fail_closed(tmp_path):
+    from dreaming.picture_bank import picture_paths
+    safe = tmp_path / 'train' / 'part_00'
+    safe.mkdir(parents=True)
+    with pytest.raises(ValueError, match='no picture'):
+        picture_paths(str(safe))
+    for directory in (tmp_path / 'heldout' / 'part_00', tmp_path / 'other', tmp_path / 'train' / 'heldout'):
+        directory.mkdir(parents=True)
+        with pytest.raises(ValueError):
+            picture_paths(str(directory))
+    foreign = tmp_path / 'foreign.npz'
+    foreign.touch()
+    (safe / 'shard.npz').symlink_to(foreign)
+    with pytest.raises(ValueError, match='outside'):
+        picture_paths(str(safe))
+    (safe / 'shard.npz').unlink()
+    (safe / 'shard.npz').touch()
+    (safe / 'heldout.npz').symlink_to(safe / 'shard.npz')
+    with pytest.raises(ValueError, match='heldout'):
+        picture_paths(str(safe))
+
+
+def test_picture_disabled_and_invalid_sampler(tmp_path, monkeypatch):
+    from dreaming import train
+    from dreaming.picture_bank import batch_counts, install_picture_bank
+    original = train.load_data
+    install_picture_bank(train, '/heldout/never/read', 0.)
+    assert train.load_data is original
+    for extra, frac, batch in [(.9, .15, 32), (.15, 0., 32), (.15, .001, 32), (.15, float('nan'), 32)]:
+        with pytest.raises(ValueError):
+            batch_counts(batch, extra, frac)
+    safe = tmp_path / 'train'
+    safe.mkdir()
+    np.savez(safe / 'shard_mixed_001_00000.npz', **dataset())
+    monkeypatch.setattr(train, 'load_data', lambda *args: object())
+    install_picture_bank(train, str(safe), .15)
+    args = SimpleNamespace(extra_data='cats', extra_frac=.15, batch=32)
+    with pytest.raises(ValueError, match='original MixedWindows'):
+        train.load_data(args, 0, 1)
+
+
+def test_picture_lock_compatibility_and_command():
+    from dreaming.cluster import check_lock, config_row
+    cfg = config('picture-test')
+    old_lock = {k: v for k, v in check_lock(cfg, None).items() if not k.startswith('picture_')}
+    assert check_lock(cfg, old_lock) == check_lock(cfg, None)
+    picture = config('picture-test', picture_data='/pic/train/part_00,/pic/train/part_01', picture_frac=.15)
+    with pytest.raises(ValueError, match='mismatch'):
+        check_lock(picture, old_lock)
+    with pytest.raises(ValueError, match='mismatch'):
+        check_lock(config('picture-test', picture_data='/pic/train/part_00'), old_lock)
+    cmd = torchrun_command(picture)
+    assert cmd.index('--picture-data') < cmd.index('--')
+    assert cmd[cmd.index('--picture-holdout-episodes') + 1] == '0'
+    default = torchrun_command(cfg)
+    expected = ['torchrun', '--nnodes=3', '--nproc-per-node=8', '--node-rank=0', '--master-addr=127.0.0.1',
+                '--master-port=29500', '--max-restarts=0', '-m', 'dreaming.warm_restart',
+                '--restart-iter', '5000', '--restart-warmup', '200', '--min-lr-frac', '0.1', '--',
+                '--lr', '0.0004', '--iters', '65000', '--batch', '32', '--unroll', '6', '--data', '/vol/shards',
+                '--extra-data', '/vol/shards_cats_dense_v1', '--extra-frac', '0.15', '--extra-shards', '40',
+                '--holdout-episodes', '2', '--log-every', '10', '--ckpt-every', '5000',
+                '--out', '/out/runs/picture-test', '--resume', cfg['source'], '--chunk', '5000', '--compile', '--sync-fix']
+    assert default == expected
+    row = config_row(picture)['config']
+    assert (row['frame_samples_base'], row['frame_samples_base_iter'], row['picture_frac']) == (960000, 5000, .15)
+
+
+@pytest.fixture
+def fork_launcher(monkeypatch):
+    monkeypatch.setenv('DREAMING_RUN_ID', 'overnight_20261108_pic24k')
+    import cluster_run
+    monkeypatch.setattr(cluster_run, 'RUN_ID', 'overnight_20261108_pic24k')
+    monkeypatch.setattr(cluster_run, 'OUT_DIR', '/out/runs/overnight_20261108_pic24k')
+    monkeypatch.setattr(cluster_run, 'SOURCE_RUN_ID', 'overnight_20261108_b30024')
+    monkeypatch.setattr(cluster_run, 'PICTURE_VOLUME', 'dreaming-picture-pilot-v1')
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], False, None))
+    monkeypatch.setattr(cluster_run, 'fork_target_names', lambda: set())
+    monkeypatch.setattr(cluster_run, 'read_source_state', lambda source_id: (
+        dict(iter=24000), [dict(start=0, deadline=10000, end=3600)], {'ckpt_024000.pt'}))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('dry-run must not call Modal functions')
+
+    monkeypatch.setattr(cluster_run.train_cluster, 'remote', forbidden)
+    return cluster_run
+
+
+def test_fork_launch(fork_launcher, capsys):
+    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1.,
+                         picture_data='/pic/train/part_00,/pic/train/part_01', picture_frac=.15, dry_run=True)
+    output = capsys.readouterr().out
+    assert '--resume /src/runs/overnight_20261108_b30024/ckpt_024000.pt' in output
+    assert '"start_iter": 24000' in output and '--restart-iter 5000' in output
+    assert '--picture-frac 0.15' in output and '--picture-data /pic/train/part_00,/pic/train/part_01' in output
+    assert '"inherited_from": "overnight_20261108_b30024"' in output
+
+
+@pytest.mark.parametrize('case', ['active', 'empty-ledger', 'target-lock', 'target-ckpt', 'target-numbered', 'target-ledger',
+                                 'missing', 'advanced', 'same-id', 'no-source', 'budget'])
+def test_fork_refusals(fork_launcher, monkeypatch, case):
+    marker, records, names = dict(iter=24000), [dict(start=0, deadline=10000, end=3600)], {'ckpt_024000.pt'}
+    if case == 'active':
+        records[0].pop('end')
+    elif case == 'empty-ledger':
+        records = []
+    elif case == 'target-lock':
+        monkeypatch.setattr(fork_launcher, 'read_state', lambda: ({}, [], False, None))
+    elif case == 'target-ckpt':
+        monkeypatch.setattr(fork_launcher, 'read_state', lambda: (None, [], True, dict(iter=24000)))
+    elif case == 'target-numbered':
+        monkeypatch.setattr(fork_launcher, 'fork_target_names', lambda: {'ckpt_024000.pt'})
+    elif case == 'target-ledger':
+        monkeypatch.setattr(fork_launcher, 'fork_target_names', lambda: {'ledger.json'})
+    elif case == 'missing':
+        names = set()
+    elif case == 'advanced':
+        marker['iter'] = 23000
+    elif case == 'same-id':
+        monkeypatch.setattr(fork_launcher, 'SOURCE_RUN_ID', fork_launcher.RUN_ID)
+    elif case == 'no-source':
+        monkeypatch.setattr(fork_launcher, 'SOURCE_RUN_ID', '')
+    elif case == 'budget':
+        records[0]['end'] = 8 * 3600
+    monkeypatch.setattr(fork_launcher, 'read_source_state', lambda source_id: (marker, records, names))
+    with pytest.raises(ValueError):
+        fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., dry_run=True)
+
+
+def test_stop_at_deadline(fork_launcher, monkeypatch, capsys):
+    from datetime import datetime, timezone
+    now = datetime(2026, 11, 8, 10, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(fork_launcher.time, 'time', lambda: now)
+    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=2.,
+                         stop_at='2026-11-08T11:00:00Z', dry_run=True)
+    cfg = json.JSONDecoder().raw_decode(capsys.readouterr().out)[0]
+    assert cfg['deadline'] == now + 3600
+    for stop_at in ('2026-11-08T10:29:59Z', '2026-11-08T09:00:00Z', '2026-11-08T11:00:00'):
+        with pytest.raises(ValueError):
+            fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=2.,
+                                 stop_at=stop_at, dry_run=True)
+
+
 def test_cpu_restart_end_to_end(tmp_path):
     data = tmp_path / 'data'
     data.mkdir()

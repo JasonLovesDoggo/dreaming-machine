@@ -3,6 +3,8 @@ import argparse
 import math
 import sys
 
+from dreaming.picture_bank import install_picture_bank
+
 
 def restart_lr(it, args, restart_iter, warmup, min_lr_frac):
     if restart_iter >= args.iters or warmup < 1 or not 0 <= min_lr_frac <= 1:
@@ -20,6 +22,9 @@ def main():
     parser.add_argument('--restart-iter', type=int, required=True)
     parser.add_argument('--restart-warmup', type=int, required=True)
     parser.add_argument('--min-lr-frac', type=float, required=True)
+    parser.add_argument('--picture-data', default='')
+    parser.add_argument('--picture-frac', type=float, default=0.)
+    parser.add_argument('--picture-holdout-episodes', type=int, default=0)
     own, rest = parser.parse_known_args()
     if rest[:1] != ['--']:
         parser.error('separate training arguments with --')
@@ -27,6 +32,7 @@ def main():
     args = train.parse_args()
     restart_lr(own.restart_iter, args, own.restart_iter, own.restart_warmup, own.min_lr_frac)
     train.lr_at = lambda it, a: restart_lr(it, a, own.restart_iter, own.restart_warmup, own.min_lr_frac)
+    install_picture_bank(train, own.picture_data, own.picture_frac, own.picture_holdout_episodes)
     train.main()
 
 

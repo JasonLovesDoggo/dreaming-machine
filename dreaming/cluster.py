@@ -9,12 +9,17 @@ import signal
 import shutil
 import subprocess
 import time
+from datetime import datetime, timedelta
+
+from dreaming.picture_bank import batch_counts
 
 SOURCE = '/vol/runs/atlas_v2_first_5k/ckpt_005000.pt'
 PROTECTED = {'main', 'atlas_v2_first_5k', 'legacy_v1', 'tput1', 'prof64', 'prof32',
              *(f'audit_ab_{c}' for c in 'ABCDE')}
 LOCK_KEYS = ('lr', 'warmup', 'min_lr_frac', 'restart_iter', 'iters', 'batch', 'unroll',
-             'data', 'extra_data', 'extra_frac', 'extra_shards', 'holdout_episodes', 'source', 'sampler_v2')
+             'data', 'extra_data', 'extra_frac', 'extra_shards', 'holdout_episodes', 'source', 'sampler_v2',
+             'picture_data', 'picture_frac')
+PICTURE_DEFAULTS = dict(picture_data='', picture_frac=0.)
 
 
 def validate_run_id(run_id):
@@ -36,8 +41,16 @@ def config(run_id, phase='long', steps=None, end_iter=10000, start_iter=5000, **
                ckpt_every=5000, sampler_v2=False, guard_max_loss=2.0, lr=4e-4, warmup=200, min_lr_frac=0.1, restart_iter=5000,
                iters=65000, batch=32, unroll=6, data='/vol/shards',
                extra_data='/vol/shards_cats_dense_v1', extra_frac=0.15, extra_shards=40,
-               holdout_episodes=2, source=SOURCE, budget_hours=8., total_cap_hours=8.)
+               holdout_episodes=2, source=SOURCE, budget_hours=8., total_cap_hours=8.,
+               picture_data='', picture_frac=0., picture_holdout_episodes=0,
+               frame_samples_base=960000, frame_samples_base_iter=5000)
     cfg.update(overrides)
+    if cfg['picture_frac'] != 0:
+        batch_counts(cfg['batch'], cfg['extra_frac'], cfg['picture_frac'])
+        if not cfg['picture_data'] or not cfg['extra_data']:
+            raise ValueError('pictures require picture_data and extra_data')
+        if type(cfg['picture_holdout_episodes']) is not int or cfg['picture_holdout_episodes'] < 0:
+            raise ValueError('picture holdout episodes must be a nonnegative int')
     if type(cfg['ckpt_every']) is not int or cfg['ckpt_every'] <= 0:
         raise ValueError('ckpt_every must be a positive int')
     if cfg['end_iter'] % cfg['ckpt_every'] or cfg['end_iter'] > cfg['iters']:
@@ -53,7 +66,7 @@ def config(run_id, phase='long', steps=None, end_iter=10000, start_iter=5000, **
 
 def check_lock(cfg, existing):
     lock = {k: cfg[k] for k in LOCK_KEYS}
-    if existing is not None and existing != lock:
+    if existing is not None and dict(PICTURE_DEFAULTS, **existing) != lock:
         raise ValueError('launch.json schedule mismatch')
     return lock
 
@@ -80,6 +93,33 @@ def check_budget(records, requested, cap=8 * 3600):
     return used
 
 
+def launch_deadline(now, budget_hours, stop_at=''):
+    deadline = now + budget_hours * 3600
+    if stop_at:
+        stop = datetime.fromisoformat(stop_at.replace('Z', '+00:00'))
+        if stop.utcoffset() != timedelta(0):
+            raise ValueError('stop_at must be ISO UTC with a timezone')
+        deadline = min(deadline, stop.timestamp())
+    if deadline - now < 1800:
+        raise ValueError('less than 30 minutes left before the launch deadline')
+    return deadline
+
+
+def fork_source(source_id, target_id, source_iter, marker, names, records):
+    validate_run_id(source_id)
+    validate_run_id(target_id)
+    if source_id == target_id:
+        raise ValueError('source and target run ids must differ')
+    if type(source_iter) is not int or source_iter <= 0:
+        raise ValueError('source_iter must be a positive int')
+    name = f'ckpt_{source_iter:06d}.pt'
+    if marker is None or source_iter > marker['iter'] or name not in names:
+        raise ValueError('source numbered checkpoint is missing or not complete')
+    if not records or any(r.get('end') is None for r in records):
+        raise ValueError('source ledger must contain only ended allocations; stop the old app first')
+    return f'/src/runs/{source_id}/{name}', [dict(r, inherited_from=source_id) for r in records]
+
+
 def resume_path(out, source=SOURCE):
     return 'auto' if (Path(out) / 'ckpt.pt').exists() else source
 
@@ -89,7 +129,11 @@ def torchrun_command(cfg, rank=0, master='127.0.0.1', resume=None):
     cmd = ['torchrun', '--nnodes=3', '--nproc-per-node=8', f'--node-rank={rank}',
            f'--master-addr={master}', '--master-port=29500', '--max-restarts=0',
            '-m', 'dreaming.warm_restart', '--restart-iter', str(cfg['restart_iter']),
-           '--restart-warmup', str(cfg['warmup']), '--min-lr-frac', str(cfg['min_lr_frac']), '--']
+           '--restart-warmup', str(cfg['warmup']), '--min-lr-frac', str(cfg['min_lr_frac'])]
+    if cfg['picture_frac'] > 0:
+        for key in ('picture_data', 'picture_frac', 'picture_holdout_episodes'):
+            cmd.extend([f'--{key.replace("_", "-")}', str(cfg[key])])
+    cmd.append('--')
     args = {k.replace('_', '-'): cfg[k] for k in ('lr', 'iters', 'batch', 'unroll', 'data',
             'extra_data', 'extra_frac', 'extra_shards', 'holdout_episodes', 'log_every', 'ckpt_every')}
     args.update(out=out, resume=resume if resume is not None else resume_path(out, cfg['source']), chunk=cfg['steps'])
@@ -298,4 +342,6 @@ def config_row(cfg, world_size=24):
         world_size=world_size, batch=cfg['batch'], unroll=cfg['unroll'],
         samples_per_update=world_size * cfg['batch'] * cfg['unroll'], log_every=cfg['log_every'],
         checkpoint_every=cfg['ckpt_every'], phase_end=cfg['end_iter'], schedule_end=cfg['iters'],
-        restart_iter=cfg['restart_iter'], warmup=cfg['warmup'], peak_lr=cfg['lr'], min_lr_frac=cfg['min_lr_frac']))
+        restart_iter=cfg['restart_iter'], warmup=cfg['warmup'], peak_lr=cfg['lr'], min_lr_frac=cfg['min_lr_frac'],
+        frame_samples_base=cfg.get('frame_samples_base', 960000),
+        frame_samples_base_iter=cfg.get('frame_samples_base_iter', 5000), picture_frac=cfg.get('picture_frac', 0.)))
