@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ..tiles import PAL, CHARSET
-from . import atlas, data_viewer, play
+from . import atlas, data_viewer, play, telemetry
 from .neural import CHECKPOINTS
 from .settings import SETTINGS
 
@@ -22,7 +22,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None):
 
     app = FastAPI(title='Dreaming Computer')
     app.mount('/static', StaticFiles(directory=STATIC), name='static')
-    for router in (play.router, data_viewer.router, atlas.router):
+    for router in (play.router, data_viewer.router, atlas.router, telemetry.router):
         app.include_router(router)
     app.add_api_route('/', _page('play.html'), include_in_schema=False)
     app.add_api_route('/data', _page('data.html'), include_in_schema=False)
