@@ -187,11 +187,21 @@ class TrainingMetricsTest(unittest.TestCase):
                            dict(kind='config', it=5, config=dict(checkpoint_every=0)), train_row(25)])
         d = self.metrics('bad')
         self.assertEqual(d['skipped_lines'], 1)
-        self.assertEqual(d['config']['values'], dict(note='mirrored', extra=1.5))
+        self.assertEqual(d['config']['values'], {}, 'unknown keys (note, extra, nested) are ignored')
         self.assertEqual(sorted(d['config']['rejected']),
                          ['batch', 'checkpoint_every', 'frame_samples_base', 'restart_iter', 'samples_per_update', 'warmup'])
         self.assertEqual((d['summary']['milestones'], d['summary']['frame_samples']), ([], None))
         self.assertEqual((d['train']['rows'], d['restarts']), (1, 0))
+
+    def test_config_only_keeps_known_fields_across_many_rows(self):
+        rows = [dict(kind='config', it=i, config={**{f'k{i}_{j}': j for j in range(100)}, 'label': 'x' * 500,
+                                                 'checkpoint_every': 1000 + i, 'peak_lr': 4e-4})
+                for i in range(300)]
+        self.write('many', rows + [train_row(25)])
+        cfg = self.metrics('many')['config']
+        self.assertEqual(cfg['values'], dict(checkpoint_every=1299, peak_lr=4e-4))
+        self.assertEqual((cfg['it'], cfg['rejected']), (299, []))
+        self.assertLessEqual(set(cfg['values']), set(training.CONFIG_FIELDS))
 
     def test_summary_falls_back_to_config_samples_per_update(self):
         self.write('run', [dict(kind='config', config=dict(samples_per_update=4608, checkpoint_every=1000)),

@@ -40,7 +40,7 @@ SCAN_TTL = 10.0
 REFRESH_TTL = 60.0
 POINTS = 2000
 RECENT = 9
-# Known config fields: (minimum, integer). Other finite numbers and short strings are kept as-is for display.
+# The only config fields kept: (minimum, integer). Unknown keys are ignored, so config stays bounded.
 CONFIG_FIELDS = {
     'frame_samples_base': (0, True), 'frame_samples_base_iter': (0, True), 'samples_per_update': (1, True),
     'world_size': (1, True), 'batch': (1, True), 'unroll': (1, True), 'log_every': (1, True),
@@ -162,22 +162,16 @@ class _Parsed:
             self.skipped += 1
             return
         it, _ = _num(row.get('it'))
-        for k, v in list(cfg.items())[:MAX_FIELDS]:
-            if not _name(k):
+        for k, (low, integer) in CONFIG_FIELDS.items():
+            if k not in cfg:
                 continue
-            value, _ = _num(v)
-            if k in CONFIG_FIELDS:
-                low, integer = CONFIG_FIELDS[k]
-                if value is None or value < low or (integer and value != int(value)):
-                    if k not in self.config_rejected:
-                        self.config_rejected.append(k)
-                    self.config.pop(k, None)
-                    continue
-                self.config[k] = int(value) if integer else value
-            elif value is not None:
-                self.config[k] = value
-            elif isinstance(v, str):
-                self.config[k] = v[:80]
+            value, _ = _num(cfg[k])
+            if value is None or value < low or (integer and value != int(value)):
+                if k not in self.config_rejected:
+                    self.config_rejected.append(k)
+                self.config.pop(k, None)
+                continue
+            self.config[k] = int(value) if integer else value
         self.config_it = int(it) if it is not None else self.config_it
 
     def _eval_note(self, it, key, value):
