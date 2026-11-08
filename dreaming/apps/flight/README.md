@@ -20,20 +20,33 @@ A minimal green strip shows altitude/speed/heading or the crash/reset message.
 
 The outside scene is rasterized at pixel resolution and each 8x8 cell is matched
 to the closest dedicated flight tile by pixel mismatch. The library contains
-nine fills, 704 angled/offset two-colour edge tiles (16 angles and four offsets
-for 11 needed colour pairs), and eight blend/dither tiles. Poor edge matches
-prefer a nearby angled boundary over a solid fill. This keeps sub-tile boundary detail rather than
+eight flat fills, 584 angled/offset edge tiles covering every pair of the
+outside colours, and 12 haze blend tiles. Coast/land and cloud/sky-band pairs have
+16 angles and three offsets, and
+other pairs have eight angles and a central offset. Every two-colour
+boundary selects an edge tile, never a solid fill. Exact blend patterns retain
+their blend tile. This keeps sub-tile boundary detail rather than
 the rejected 4x4-pixel Paint-cell quantization. Cockpit art is fixed tile art;
 needles and attitude indicators are small tile variants.
 
 All art is deduplicated per 8x8 tile, so static gauge parts are shared across
-needle angles and instruments; only crossed tiles vary. Flight uses 992 unique
-tiles: 256 in app_flight and 736 at the start of app_spare (2304..3039).
+needle angles and instruments; only crossed tiles vary. Flight uses 857 unique
+tiles: 256 in app_flight and 601 at the start of app_spare (2304..2904).
 Flight reserves at most the first 768 app_spare IDs (2304..3071), for a hard
 1024-tile total limit. The larger reservation buys finer edge angles/offsets
 instead of increasing model parameters. No IDs present on main are renumbered.
 Distant runway details are
 suppressed instead of becoming gray blocks; nearby runways retain white markings.
+Two Flight-only colours are appended to the display palette: light sky/haze blue
+and dark muted green. Sea, sand and mid-green use existing colours. Existing palette entries and
+all main tile pixels stay unchanged. Sky and sea fills are flat; only a thin
+horizon haze band is dithered. The web transport and recorded-data viewer already
+carry uint8 palette indices and obtain the palette dynamically, so need no changes.
+Clouds use a raised noise threshold targeting roughly 5–15% sky coverage, with
+horizontally stretched, smoothed small puffs restricted above the horizon.
+Indicator clusters are removed. The dashboard is only 24 pixels high, half its
+previous height, with three 16x16 gauges assembled from 2x2 tile parts. The
+outside scene gains 24 vertical pixels; status text remains below the view.
 
 There are **zero new model parameters, heads, embeddings, observation keys or
 sequence positions**. The 532 cockpit/view tokens are ordinary tiles within the
@@ -51,4 +64,6 @@ fixed-art principle to detailed edges and gauges.
 
 Driver patterns cover takeoff, cruise, turns, climbs, dives, landing attempts,
 crashes and noisy interactions. Focused simulation: Driver(sim, seed, 'flight').
+The Flight task closes windows obstructing its desktop icon before opening it;
+right-aligning wide windows alone cannot uncover the newer icon columns.
 Preview endpoint: /sprites/flight. No training or Modal job is needed.

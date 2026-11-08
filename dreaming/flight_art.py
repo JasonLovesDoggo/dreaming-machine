@@ -1,23 +1,31 @@
 """Flight atlas art, independent of simulator state and atlas construction."""
 import numpy as np
+from itertools import combinations
 
 W, H = 224, 152
-PAIRS = [(12, 1), (12, 14), (12, 11), (1, 13), (13, 11), (11, 14), (12, 7), (11, 5), (5, 7), (1, 11), (13, 14)]
-FILLS = [12, 1, 14, 13, 7, 5, 0, 6, 11]
-FRAME_COLORS = [12, 1, 14, 13, 11, 7]
+SKY, SKY_MID, SKY_LOW, HAZE, SEA, GRASS, HILL, SAND = 12, 16, 16, 16, 1, 14, 17, 13
+FILLS = [SKY, SKY_LOW, SEA, GRASS, HILL, SAND, 5, 7]
+FRAME_COLORS = FILLS
+PAIRS = list(combinations(FILLS, 2))
+DETAILED_PAIRS = {frozenset(pair) for pair in combinations((SEA, GRASS, HILL, SAND), 2)}
+SOFT_PAIRS = {frozenset(pair) for pair in ((SKY, 7), (SKY_LOW, 7), (SKY, SKY_LOW))}
+
+
+def edge_geometry(pair):
+    key = frozenset(pair)
+    return (16, (-3, 0, 3)) if key in DETAILED_PAIRS | SOFT_PAIRS else (8, (0,))
 
 
 def outside_tiles():
     yy, xx = np.mgrid[:8, :8]
     out = [np.full((8, 8), c, np.uint8) for c in FILLS]
     for a, b in PAIRS:
-        for angle in np.arange(16) * np.pi / 8:
-            for offset in (-3, -1, 1, 3):
+        angles, offsets = edge_geometry((a, b))
+        for angle in np.arange(angles) * 2 * np.pi / angles:
+            for offset in offsets:
                 mask = (xx - 3.5) * np.cos(angle) + (yy - 3.5) * np.sin(angle) > offset
                 out.append(np.where(mask, b, a).astype(np.uint8))
-    out.append(np.where((xx + yy * 3) % 16 == 0, 7, 12).astype(np.uint8))
-    out.append(np.where((xx + yy * 2) % 16 == 0, 12, 1).astype(np.uint8))
-    for a, b in ((12, 7), (11, 14)):
+    for a, b in ((SKY, HAZE), (HAZE, SEA), (HAZE, GRASS), (HAZE, HILL)):
         for coverage in (1, 2, 3):
             out.append(np.where((xx + yy * 2) % 4 < coverage, b, a).astype(np.uint8))
     return out
@@ -29,19 +37,14 @@ def cockpit():
     frame = (yy < 4) | (xx < 4) | (xx >= W - 4)
     left = np.abs(xx - (16 + yy * .5))
     right = np.abs(xx - (W - 17 - yy * .5))
-    frame |= ((left < 5) | (right < 5)) & (yy < 104)
-    panel_top = 104
+    frame |= ((left < 5) | (right < 5)) & (yy < 128)
+    panel_top = 128
     frame |= yy >= panel_top
     img[frame] = 0
     inner = frame & (yy >= panel_top + 2)
     img[inner] = 5
-    img[frame & (yy < 104) & (((left >= 4) & (left < 5)) | ((right >= 4) & (right < 5)))] = 5
+    img[frame & (yy < 128) & (((left >= 4) & (left < 5)) | ((right >= 4) & (right < 5)))] = 5
     img[(yy > 146) & frame] = 5
-    for x0 in (39, 168):
-        img[114:141, x0:x0 + 20] = 5
-        for row in range(3):
-            for col in range(3):
-                img[117 + row * 7:121 + row * 7, x0 + 3 + col * 5:x0 + 6 + col * 5] = 14 if (row + col) % 3 else 11
     return img
 
 
@@ -66,7 +69,8 @@ def dial(kind, level):
             tx, ty = round(11.5 + np.sin(a) * t), round(11.5 - np.cos(a) * t)
             img[ty, tx] = 7
         img[11:13, 11:13] = 6
-    return img
+    indices = np.arange(16) * 3 // 2
+    return img[np.ix_(indices, indices)]
 
 
 def cockpit_tiles():
@@ -79,12 +83,13 @@ def cockpit_tiles():
                 out.append((('flight_panel', row, col), patch))
             elif (patch != 255).any():
                 for color in FRAME_COLORS:
-                    out.append((('flight_frame', row, col, color), np.where(patch == 255, color, patch)))
+                    background = np.full((8, 8), color, np.uint8)
+                    out.append((('flight_frame', row, col, color), np.where(patch == 255, background, patch)))
     for kind, levels in [('speed', 16), ('altitude', 16), ('attitude', 15)]:
         for level in range(levels):
             img = dial(kind, level)
-            for row in range(3):
-                for col in range(3):
+            for row in range(2):
+                for col in range(2):
                     out.append((('flight_dial', kind, level, row, col), img[row*8:row*8+8, col*8:col*8+8]))
     return out
 

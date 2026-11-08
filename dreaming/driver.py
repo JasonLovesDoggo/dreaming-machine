@@ -1031,6 +1031,14 @@ class Driver:
             yield from self.idle(r.randint(0, 4))
 
     def task_flight(self):
+        if 'flight' not in self.os.z:
+            index = next(i for i, (_, _, target) in enumerate(DESK_ICONS) if target[0] == 'flight')
+            ir, ic = icon_pos(index)
+            for _ in APPS:
+                blocking = self.os._window_at(ic, ir) or self.os._window_at(ic + 1, ir + 1)
+                if blocking is None:
+                    break
+                yield from self.close(blocking)
         yield from self.open_app('flight')
         char = lambda c: KEY_CHAR0 + CHARSET.index(c)
         patterns = [(char('W'), 30), (0, 25), (KEY_UP, 14), (0, 65),
