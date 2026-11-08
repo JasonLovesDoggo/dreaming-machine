@@ -251,10 +251,15 @@ class CalibrationGuard:
 
 
 def resume_choice(marker_iter, names, resume_iter=0, restart_iter=5000):
-    """(start_iter, checkpoint basename): latest marker by default, or an earlier completed numbered one."""
+    """(start_iter, checkpoint basename) for the latest marker; an explicit pin must equal it.
+
+    Resuming earlier would overwrite later numbered checkpoints, so that needs a new run id."""
     it = resume_iter or marker_iter
     if isinstance(it, bool) or not isinstance(it, int) or not restart_iter < it <= marker_iter:
         raise ValueError(f'resume iteration must be in ({restart_iter}, {marker_iter}]')
+    if it != marker_iter:
+        raise ValueError(f'resume iteration {it} is before latest marker {marker_iter}: '
+                         'would overwrite numbered checkpoints; use a new run id')
     name = f'ckpt_{it:06d}.pt'
     if name not in names:
         raise ValueError(f'completed checkpoint {name} missing; refusing partial ckpt.pt')
