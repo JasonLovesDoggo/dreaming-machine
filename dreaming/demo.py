@@ -91,12 +91,13 @@ body{background:#181a20;color:#ddd;font-family:monospace;margin:20px}
 canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;cursor:none}
 .row{display:flex;gap:24px}.scr{position:relative;width:772px;height:580px}.grid{position:absolute;left:2px;top:2px;width:768px;height:576px;pointer-events:none;display:none;border:none;cursor:auto}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
 </style></head><body>
-<h2>Dreaming Computer: real simulator (left) vs world model (right)</h2><a href="/data" style="color:#8cf">training data viewer &rarr;</a>
+<h2>Dreaming Computer: real simulator (left) vs world model (right)</h2>
 <div class="row"><div><div>REAL (deterministic code)</div><div class="scr"><canvas id="real" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div>
 <div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
-<label><input id="gridt" type="checkbox"> show tile grid</label> &nbsp; temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
+checkpoint <select id="ckpt"></select> &nbsp; <label><input id="gridt" type="checkbox"> show tile grid</label> &nbsp; temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
 <p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
+<p><a href="/data" style="color:#8cf">training data viewer</a> &middot; <a href="/sprites" style="color:#8cf">tile &amp; sprite atlas</a></p>
 <script>
 const PAL=__PAL__;
 const HELD={ArrowUp:1,ArrowDown:2,ArrowLeft:3,ArrowRight:4,Control:5};const QUEUED={Enter:6,Escape:7,Delete:8,Backspace:8};const CHARSET=__CHARSET__;
@@ -112,13 +113,15 @@ for(const g of document.querySelectorAll('.grid')){const c=g.getContext('2d');c.
  for(let x=0;x<=32;x++){c.beginPath();c.moveTo(x*24+0.5,0);c.lineTo(x*24+0.5,576);c.stroke();}
  for(let y=0;y<=24;y++){c.beginPath();c.moveTo(0,y*24+0.5);c.lineTo(768,y*24+0.5);c.stroke();}}
 document.getElementById('gridt').onchange=e=>{for(const g of document.querySelectorAll('.grid'))g.style.display=e.target.checked?'block':'none';};
+fetch('/ckpts').then(r=>r.json()).then(j=>{const s=document.getElementById('ckpt');for(const n of j.ckpts){const o=document.createElement('option');o.textContent=n;if(n===j.current)o.selected=true;s.appendChild(o);}if(!j.ckpts.length){const o=document.createElement('option');o.textContent='none';s.appendChild(o);}});
+document.getElementById('ckpt').onchange=()=>cmd='load';
 document.getElementById('sync').onclick=()=>cmd='sync'; document.getElementById('reset').onclick=()=>cmd='reset';
 function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImageData(256,192);
  for(let i=0;i<256*192;i++){const p=PAL[bytes[off+i]];img.data[4*i]=p[0];img.data[4*i+1]=p[1];img.data[4*i+2]=p[2];img.data[4*i+3]=255;}
  ctx.putImageData(img,0,0);}
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+location.pathname.replace(/\\/$/,'')+'/ws');
 ws.binaryType='arraybuffer'; let t0=performance.now(),avg=66,sent=performance.now();
-function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;sent=performance.now();ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp}));cmd=null;}
+function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;sent=performance.now();ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp,ckpt:document.getElementById('ckpt').value}));cmd=null;}
 ws.onopen=send;
 ws.onmessage=e=>{const b=new Uint8Array(e.data);draw(cv.real,b,0);if(b.length>49152)draw(cv.neural,b,49152);
  const now=performance.now(),dt=now-t0;t0=now;avg=avg*0.9+dt*0.1;document.getElementById('info').textContent=` ${(1000/avg).toFixed(1)} fps`;
@@ -158,6 +161,134 @@ class Neural:
         return self.obs
 
 
+def list_ckpts():
+    d = STATE.get('ckpt_dir')
+    if not d or not os.path.isdir(d):
+        return []
+    return sorted(os.path.basename(f) for f in glob.glob(os.path.join(d, 'ckpt*.pt')))
+
+
+def load_ckpt(name):
+    cache = STATE.setdefault('loaded', {})
+    if name not in cache:
+        cache.clear()
+        cache[name] = Neural(os.path.join(STATE['ckpt_dir'], name), STATE.get('device', 'cpu'))
+    return cache[name]
+
+
+@app.get('/ckpts')
+def ckpts():
+    return JSONResponse(dict(ckpts=list_ckpts(), current=STATE.get('current', '')))
+
+
+def init_neural(ckpt_dir, device, name=None):
+    STATE['ckpt_dir'], STATE['device'] = ckpt_dir, device
+    names = list_ckpts()
+    if not names:
+        return
+    numbered = [n for n in names if n != 'ckpt.pt']
+    name = name or (numbered[-1] if numbered else names[-1])
+    STATE['neural'] = load_ckpt(name)
+    STATE['current'] = name
+
+
+SPRITES = """<!doctype html><html><head><title>Dreaming Computer: tile & sprite atlas</title><style>
+body{background:#1b1b1f;color:#ddd;font-family:monospace;margin:16px}img{image-rendering:pixelated;border:1px solid #444;display:block;margin:6px 0 18px}a{color:#8cf}</style></head><body>
+<h2>Every tile and sprite the model can output</h2><p>Hover a tile to see its token ID. Each sheet is 64 tiles per row, drawn 3x.</p><div id="secs"></div>
+<p><a href="/">&larr; play the computer</a> &middot; <a href="/data">training data viewer</a></p>
+<script>
+fetch('/sprites/index').then(r=>r.json()).then(j=>{const d=document.getElementById('secs');
+ for(const s of j.sections){const h=document.createElement('h3');h.textContent=`${[].concat(s.name).join(' / ')}: ids ${s.start}-${s.end-1} (${s.end-s.start} tiles${s.shown<s.end-s.start?', showing '+s.shown:''})`;d.appendChild(h);
+  const im=document.createElement('img');im.src=`/sprites/sheet?start=${s.start}&n=${s.shown}`;const info=document.createElement('div');
+  im.onmousemove=e=>{const r=im.getBoundingClientRect();const c=Math.floor((e.clientX-r.left)/24),rr=Math.floor((e.clientY-r.top)/24);const id=s.start+rr*64+c;info.textContent=id<s.start+s.shown?'tile id '+id:'';};
+  d.appendChild(im);d.appendChild(info);}
+ const h=document.createElement('h3');h.textContent='Doom: wall textures (lit/dark side, 16x16 shown 4x); sprite kinds 1-3 at sizes 6/12/24/40 drawn by render_tokens; bottom row: real frames';d.appendChild(h);
+ const im=document.createElement('img');im.src='/sprites/doom';d.appendChild(im);});
+</script></body></html>"""
+
+
+def _sections():
+    from .tiles import ATLAS
+    rng = sorted(ATLAS.ranges.items(), key=lambda kv: kv[1][0])
+    out, prev = [], 0
+    if rng and rng[0][1][0] > 0:
+        out.append(('ui', 0, rng[0][1][0]))
+    for name, (a, b) in rng:
+        out.append((name, a, b))
+    return out
+
+
+@app.get('/sprites')
+def sprites_page():
+    return HTMLResponse(SPRITES)
+
+
+@app.get('/sprites/index')
+def sprites_index():
+    return JSONResponse(dict(sections=[dict(name=n, start=a, end=b, shown=min(b - a, 64 * 32)) for n, a, b in _sections()]))
+
+
+def _png(rgb, scale):
+    from PIL import Image
+    buf = io.BytesIO()
+    im = Image.fromarray(rgb)
+    im.resize((im.width * scale, im.height * scale), Image.NEAREST).save(buf, 'PNG')
+    return Response(buf.getvalue(), media_type='image/png')
+
+
+@app.get('/sprites/sheet')
+def sprites_sheet(start: int, n: int):
+    from .tiles import ATLAS
+    tiles = np.stack(ATLAS.tiles[start:start + n])
+    rows = (len(tiles) + 63) // 64
+    sheet = np.zeros((rows * 8, 64 * 8), np.uint8)
+    for i, t in enumerate(tiles):
+        sheet[(i // 64) * 8:(i // 64) * 8 + 8, (i % 64) * 8:(i % 64) * 8 + 8] = t
+    return _png(np.asarray(PAL, np.uint8)[sheet], 3)
+
+
+@functools.lru_cache(maxsize=1)
+def _doom_sheet():
+    from . import doom as dm
+
+    def pad(x, b=4):
+        return np.pad(x, ((b, b), (b, b)))
+
+    def hcat(xs):
+        h = max(x.shape[0] for x in xs)
+        return np.concatenate([np.pad(x, ((0, h - x.shape[0]), (0, 0))) for x in xs], 1)
+
+    def vcat(xs):
+        w = max(x.shape[1] for x in xs)
+        return np.concatenate([np.pad(x, ((0, 0), (0, w - x.shape[1]))) for x in xs], 0)
+
+    tex = hcat([pad(np.kron(dm.TEX[t, sd], np.ones((4, 4), np.uint8))) for t in range(1, dm.TEX.shape[0]) for sd in (0, 1)])
+    cols = np.zeros((160, 4), np.uint8)
+    cols[:, 0], cols[:, 2], cols[:, 3] = 1, 4, np.arange(160) % 16
+    rows = []
+    for kind in (1, 2, 3):
+        fr = []
+        for size in (6, 12, 24, 40):
+            spr = np.zeros((4, 3), np.uint8)
+            spr[0] = (kind, 80 + 32, size)
+            fr.append(pad(dm.render_tokens(cols, spr, 0)))
+        rows.append(hcat(fr))
+    o = MicroOS(7)
+    o.reset()
+    o.open_app('doom')
+    real, rr = [], random.Random(3)
+    for k in range(600):
+        ob = o.step((128, 96, 0, rr.choice([1, 1, 3, 5, 5, 0])))
+        if k % 150 == 149:
+            real.append(pad(dm.render_tokens(ob['doom_cols'], ob['doom_spr'], int(ob['doom_meta'][0]) > 0)))
+    return np.asarray(PAL, np.uint8)[vcat([tex] + rows + [hcat(real)])]
+
+
+@app.get('/sprites/doom')
+def sprites_doom():
+    return _png(_doom_sheet(), 2)
+
+
 @app.get('/')
 def index():
     page = PAGE.replace('__PAL__', json.dumps(PAL.tolist())).replace('__CHARSET__', json.dumps(CHARSET))
@@ -169,7 +300,8 @@ async def ws(sock: WebSocket):
     await sock.accept()
     real = MicroOS(random.randrange(10 ** 9))
     obs = real.reset()
-    neural = STATE.get('neural')
+    import copy
+    neural = copy.copy(STATE['neural']) if STATE.get('neural') else None
     if neural:
         neural.sync(obs)
     while True:
@@ -179,6 +311,13 @@ async def ws(sock: WebSocket):
             if neural: neural.sync(obs)
         elif msg.get('cmd') == 'sync' and neural:
             neural.sync(obs)
+        elif msg.get('cmd') == 'load' and msg.get('ckpt') in list_ckpts():
+            try:
+                neural = copy.copy(load_ckpt(msg['ckpt']))
+                neural.sync(obs)
+            except Exception:
+                import traceback
+                traceback.print_exc()
         a = (int(msg['x']), int(msg['y']), int(msg['btn']), int(msg['key']))
         try:
             obs = real.step(a)
@@ -199,7 +338,8 @@ def main():
     a = ap.parse_args()
     if a.ckpt:
         import torch
-        STATE['neural'] = Neural(a.ckpt, 'cuda' if torch.cuda.is_available() else 'cpu')
+        dev = 'cuda' if torch.cuda.is_available() else 'cpu'
+        init_neural(os.path.dirname(os.path.abspath(a.ckpt)), dev, os.path.basename(a.ckpt))
     uvicorn.run(app, host='0.0.0.0', port=a.port)
 
 

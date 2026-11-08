@@ -18,13 +18,14 @@ TASK_EVENTS = {
     'notepad': ['np_type', 'np_save', 'np_new', 'np_backspace', 'ex_open_txt'],
     'images': ['ex_new_file', 'paint_loaded'],
     'noise': ['desk_select'],
+    'chaos': [],
 }
 UNKNOWN_WORDS = "IMG PHOTO TRIP MEME ART PIC SCAN WALLPAPER DOODLE BEST OLD THING STUFF".split()
 WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHIP IT NOW GPU MODEL TRAIN PLAY CARDS "
          "FILE SAVE NEW OK YES NO 123 2026 WIN NOTE MEETING AT 5:00 BUY MILK EGGS CALL MOM FIX BUG DEPLOY FRIDAY "
          "COFFEE PIZZA TONIGHT REMEMBER TO WATER PLANTS SOLITAIRE HIGH SCORE KILLS AMMO HP LOVE THIS COMPUTER "
          "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
-BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4}
+BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0}
 
 
 class Driver:
@@ -583,11 +584,75 @@ class Driver:
                 yield from self.move_to(r.randrange(SCREEN_W), r.randrange(SCREEN_H))
                 yield from self.idle(r.randint(2, 15))
 
+    def _empty_spot(self):
+        r = self.rng
+        for _ in range(20):
+            x, y = r.randrange(SCREEN_W), r.randrange(SCREEN_H - T)
+            c, rr = x // T, y // T
+            if self.os._window_at(c, rr) is None and not (c < 6 and rr < 12):
+                return x, y
+        return SCREEN_W - 1 - r.randrange(60), SCREEN_H - T - 1 - r.randrange(40)
+
+    def _window_spot(self):
+        if not self.os.z:
+            return self._empty_spot()
+        app = self.rng.choice(self.os.z)
+        (wc, wr), (w, h) = self.os.pos[app], APP_SIZES[app]
+        return wc * T + self.rng.randrange(w * T), wr * T + self.rng.randrange(h * T)
+
+    def task_chaos(self):
+        """Bad / pointless input: the model must learn that most of it changes nothing."""
+        r = self.rng
+        for _ in range(r.randint(2, 8)):
+            p = r.random()
+            if p < 0.22:
+                yield from self.click(*self._empty_spot(), double=r.random() < 0.35)
+            elif p < 0.34:
+                yield from self.click(*self._window_spot(), double=r.random() < 0.3)
+            elif p < 0.48:
+                x0, y0 = self._empty_spot() if r.random() < 0.6 else self._window_spot()
+                x1, y1 = (x0 + r.randint(-80, 80), y0 + r.randint(-60, 60)) if r.random() < 0.6 else self._empty_spot()
+                yield from self.drag(x0, y0, x1, y1, speed=r.uniform(2, 14))
+            elif p < 0.56:
+                x, y = self._empty_spot() if r.random() < 0.5 else self._window_spot()
+                yield from self.move_to(x, y)
+                for _ in range(r.randint(3, 10)):
+                    self.btn = 1
+                    yield self.act()
+                    self.btn = 0
+                    yield self.act()
+            elif p < 0.64:
+                yield from self.move_to(*self._empty_spot())
+                self.btn = 1
+                yield self.act()
+                yield from self.idle(r.randint(2, 20))
+                yield from self.move_to(*self._window_spot(), speed=r.uniform(3, 10))
+                self.btn = 0
+                yield self.act()
+            elif p < 0.76:
+                if self.os.z and r.random() < 0.7:
+                    yield from self.ensure_focus(r.choice(self.os.z))
+                else:
+                    yield from self.click(*self._empty_spot())
+                for _ in range(r.randint(1, 12)):
+                    yield from self.press_key(r.randrange(1, NKEYS))
+                    yield from self.idle(r.randint(0, 2))
+            elif p < 0.84:
+                yield from self.click(r.randrange(SCREEN_W), SCREEN_H - 1 - r.randrange(T), double=r.random() < 0.3)
+            elif p < 0.92:
+                for _ in range(r.randint(2, 6)):
+                    yield from self.move_to(*self._window_spot(), speed=r.uniform(2, 20))
+                    yield from self.idle(r.randint(0, 8))
+            else:
+                yield from self.idle(r.randint(10, 60))
+        self.btn = 0
+        yield self.act()
+
     # ---------------------------------------------------------------- scheduler
     def choose_task(self):
         ws = {}
         for task, evs in TASK_EVENTS.items():
-            least = min(self.counts[e] for e in evs)
+            least = min((self.counts[e] for e in evs), default=0)
             ws[task] = BASE_W[task] / math.sqrt(1 + least)
         tasks = list(ws)
         return self.rng.choices(tasks, weights=[ws[t] for t in tasks])[0]

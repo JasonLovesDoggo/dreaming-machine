@@ -52,15 +52,20 @@ def train8(args: str):
     return _train(args, 8)
 
 
+@app.function(image=image, volumes={'/vol': vol}, gpu='H100:5', memory=196608, cpu=20, timeout=24 * 3600)
+def train5(args: str):
+    return _train(args, 5)
+
+
 @app.function(image=image, volumes={'/vol': vol}, gpu='H100', memory=131072, cpu=8, timeout=24 * 3600)
 def train1(args: str):
     return _train(args, 1)
 
 
 @app.local_entrypoint()
-def train(gpus: int = 8, iters: int = 150000, chunk: int = 10000, batch: int = 32, unroll: int = 6, run: str = 'main', extra: str = ''):
+def train(gpus: int = 5, iters: int = 150000, chunk: int = 10000, batch: int = 32, unroll: int = 6, run: str = 'main', extra: str = ''):
     args = f'--out {RUNS}/{run} --iters {iters} --chunk {chunk} --batch {batch} --unroll {unroll} --compile --resume auto {extra}'
-    fn = train8 if gpus == 8 else train1
+    fn = {8: train8, 5: train5, 1: train1}[gpus]
     print('exit', fn.remote(args))
 
 
@@ -88,7 +93,5 @@ def web():
     import os
     import dreaming.demo as d
     d.DATA_DIR = '/vol/shards'
-    ck = '/vol/runs/main/ckpt.pt'
-    if os.path.exists(ck):
-        d.STATE['neural'] = d.Neural(ck, 'cuda')
+    d.init_neural('/vol/runs/main', 'cuda')
     return d.app

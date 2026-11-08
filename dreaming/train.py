@@ -216,6 +216,7 @@ def main():
         if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == end_it):
             ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it + 1, opt=opt.state_dict(), args=vars(a))
             torch.save(ck, os.path.join(a.out, 'ckpt.pt'))
+            torch.save(ck, os.path.join(a.out, f'ckpt_{it + 1:06d}.pt'))
             model.eval()
             with amp:
                 save_rollout_png(os.path.join(a.out, f'rollout_{it + 1:06d}.png'), model, b, model.init_memory(B),
