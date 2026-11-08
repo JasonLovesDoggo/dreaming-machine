@@ -132,7 +132,7 @@ def read_state():
 
 
 @app.local_entrypoint()
-def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
+def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_every: int = 5000,
            guard_max_loss: float = 2.0, lr: float = 4e-4, warmup: int = 200,
            iters: int = 65000, budget_hours: float = 8., dry_run: bool = False,
            min_lr_frac: float = 0.1, restart_iter: int = 5000, batch: int = 32,
@@ -144,7 +144,7 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
     if resumed and marker is None:
         raise ValueError('checkpoint exists without run.json: cannot determine publication start')
     start_iter = marker['iter'] if resumed else restart_iter
-    cfg = config(RUN_ID, phase, steps or None, end_iter=end_iter, start_iter=start_iter,
+    cfg = config(RUN_ID, phase, steps or None, end_iter=end_iter, start_iter=start_iter, ckpt_every=ckpt_every,
                  guard_max_loss=guard_max_loss, lr=lr, warmup=warmup, iters=iters,
                  budget_hours=budget_hours, min_lr_frac=min_lr_frac, restart_iter=restart_iter,
                  batch=batch, unroll=unroll, data=data_path, extra_data=extra_data,

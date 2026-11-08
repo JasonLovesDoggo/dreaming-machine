@@ -35,9 +35,10 @@ prints the complete config and torchrun command before remote launch. Avoid
 `modal run --dry-run`: Modal app initialization may hydrate/create resources.
 The direct Python preview queries volume metadata/files through the SDK only.
 
+Checkpoint cadence is configurable with `--ckpt-every` (positive int, default 5000); the end must align to it, and cadence may change on resume.
 Only phase `long` is supported. `--steps` overrides the default absolute
 `--end-iter 10000`. The resolved start plus steps **must end on a multiple of
-5000**, at or before `--iters`. Every checkpoint is at absolute iteration 10000,
+the cadence (5000 by default)**, at or before `--iters`. By default, every checkpoint is at absolute iteration 10000,
 15000, 20000, etc.; there are no pilot/gate chunks or extra calibration saves.
 `train.py` also saves at the chunk end, so alignment is mandatory. Automatic
 resume uses the numbered `/out/runs/<id>/ckpt_NNNNNN.pt` matching run.json,
