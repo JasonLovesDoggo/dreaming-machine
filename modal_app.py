@@ -10,7 +10,8 @@ import modal.experimental
 app = modal.App('dreaming-machine')
 vol = modal.Volume.from_name('dreaming-computer-data', create_if_missing=True)
 image = (modal.Image.debian_slim(python_version='3.11')
-         .pip_install('torch==2.5.1', 'numpy', 'pillow')
+         .pip_install('torch==2.10.0', index_url='https://download.pytorch.org/whl/cu130')
+         .pip_install('numpy', 'pillow')
          .add_local_python_source('dreaming'))
 DATA = '/vol/shards'
 RUNS = '/vol/runs'
