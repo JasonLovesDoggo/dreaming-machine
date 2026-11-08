@@ -70,8 +70,8 @@ def test_edges_cockpit_clouds_and_instruments():
 
 def test_compact_atlas_and_shared_gauge_parts():
     ids = {value for key, value in ATLAS.ids.items() if key[0].startswith('flight_')}
-    assert len(ids) <= 512
-    assert all(2048 <= value < 2304 or 2304 <= value < 2560 for value in ids)
+    assert len(ids) <= 1024
+    assert all(2048 <= value < 2304 or 2304 <= value < 3072 for value in ids)
     for level in range(16):
         assert ATLAS[('flight_dial', 'speed', level, 0, 0)] == ATLAS[('flight_dial', 'altitude', level, 0, 0)]
     assert len({ATLAS[('flight_dial', 'speed', level, r, c)]
@@ -110,3 +110,25 @@ def test_banked_horizon_attitude_and_cracked_windscreen(monkeypatch):
     assert crashed[5, 12] in {ATLAS[('flight_crack', color, 2)] for color in (12, 1, 14, 13)}
     f.step('ENTER')
     assert not f.crash
+
+
+def test_perlin_world_continuity_seed_and_flat_airfields():
+    from .apps.flight.world import fbm, perlin, terrain
+    x, y = np.meshgrid(np.linspace(-4, 4, 32), np.linspace(-3, 3, 24))
+    a = fbm(x, y, 7)
+    assert np.array_equal(a, fbm(x, y, 7))
+    assert not np.array_equal(a, fbm(x, y, 8))
+    assert np.isfinite(a).all() and np.max(np.abs(a)) < 1
+    assert np.max(np.abs(perlin(x + 1e-6, y, 7) - perlin(x, y, 7))) < 1e-4
+    assert fbm(np.array([]), np.array([]), 7).size == 0
+    for cx, cy in ((0, 0), (1200, 900)):
+        height, material = terrain(cx + np.array([-10, 0, 10]), cy, 7)
+        assert np.all(height == 8) and np.all(np.isin(material, (4, 5)))
+
+
+def test_badly_matched_edges_are_not_flattened():
+    from .flight_art import FILLS
+    patch = np.full((8, 8), 12, np.uint8)
+    patch[5:, :] = 11
+    patch[4, 4:] = 11
+    assert match_tile(patch.tobytes()) >= len(FILLS)

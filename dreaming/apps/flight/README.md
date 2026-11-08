@@ -5,8 +5,11 @@ Enter restarts. Gentle runway contact lands; other ground contact crashes and
 resets after a 30-step message. Physics, scenery and clouds are deterministic.
 
 The 30x22-tile window contains a 224x152 first-person cockpit. The outside view
-uses seeded terrain with sea, sand, green land, runway markings and occasional
-clouds. Pitch moves the horizon; bank tilts it. Angled window struts, button
+uses four-octave seeded gradient Perlin fBm (lacunarity 2, gain 0.5) with sea,
+sand, green lowlands, darker uplands and two smoothly flattened airfields.
+The terrain heightfield is perspective-projected at full pixel resolution
+before tile matching. Clouds use an independent fBm field with soft density
+falloff and dithered opacity. Pitch moves the horizon; bank tilts it. Angled window struts, button
 clusters and a dashboard frame three readable instruments: airspeed, attitude,
 altitude. Gauges use 16 needle angles and 15 pitch/bank attitude-ball variants.
 Charcoal dashboard, thick edged struts and dark dial faces frame the view.
@@ -17,17 +20,19 @@ A minimal green strip shows altitude/speed/heading or the crash/reset message.
 
 The outside scene is rasterized at pixel resolution and each 8x8 cell is matched
 to the closest dedicated flight tile by pixel mismatch. The library contains
-eight fills, 192 angled/offset two-colour edge tiles (horizon, coast, sand, cloud,
-runway), two dither fills and eight rounded cloud parts. This keeps sub-tile boundary detail rather than
+nine fills, 704 angled/offset two-colour edge tiles (16 angles and four offsets
+for 11 needed colour pairs), and eight blend/dither tiles. Poor edge matches
+prefer a nearby angled boundary over a solid fill. This keeps sub-tile boundary detail rather than
 the rejected 4x4-pixel Paint-cell quantization. Cockpit art is fixed tile art;
 needles and attitude indicators are small tile variants.
 
 All art is deduplicated per 8x8 tile, so static gauge parts are shared across
-needle angles and instruments; only crossed tiles vary. Flight uses 442 unique
-tiles: 256 in app_flight and 186 at the start of app_spare (2304..2489).
-Flight reserves at most the first 256 app_spare IDs (2304..2559), for a hard
-512-tile total limit. No IDs present on main are renumbered.
-Clouds use aligned rounded multi-lobed shapes. Distant runway details are
+needle angles and instruments; only crossed tiles vary. Flight uses 992 unique
+tiles: 256 in app_flight and 736 at the start of app_spare (2304..3039).
+Flight reserves at most the first 768 app_spare IDs (2304..3071), for a hard
+1024-tile total limit. The larger reservation buys finer edge angles/offsets
+instead of increasing model parameters. No IDs present on main are renumbered.
+Distant runway details are
 suppressed instead of becoming gray blocks; nearby runways retain white markings.
 
 There are **zero new model parameters, heads, embeddings, observation keys or
