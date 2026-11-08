@@ -1,4 +1,7 @@
-# The Dreamer
+# Chat
+
+Chat is the in-world chat app. Its assistant persona is The Dreamer.
+
 
 The committed compressed corpus contains over 30,000 GPT-6.1 Terra-authored
 question/answer pairs. Terra invents the prompt space and critiques and improves
@@ -19,7 +22,7 @@ Cached replies are reused; failures fall back to local retrieval. Live mode can
 block briefly on network requests and is not deterministic. It is off by default;
 the default path never imports the SDK, reads the live cache, or calls the network.
 
-Open DREAM on the desktop. Enter sends; Delete backspaces; Up/Down scroll history.
+Open CHAT on the desktop. Enter sends; Delete backspaces; Up/Down scroll history.
 Replies appear three characters per simulation step. History retains 24 messages.
 The input is capped at 160 characters. Empty sends and sends while replying are no-ops.
 

@@ -270,3 +270,9 @@ def test_live_empty_response_and_corrupt_cache(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match='empty live reply'):
         dreamer.live_reply('NEW')
     assert path.read_text() == before
+
+
+def test_app_is_named_chat():
+    from .os_sim import APP_TITLES, DESK_ICONS
+    assert APP_TITLES['dreamer'] == 'CHAT'
+    assert ('dreamer', 'CHAT', ('dreamer', None)) in DESK_ICONS
