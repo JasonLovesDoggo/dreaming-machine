@@ -37,7 +37,8 @@ def gen_data(total_steps: int = 20_000_000, containers: int = 20, seed_offset: i
 
 
 SPECIALS = {'doom': 4_000_000, 'cards': 4_000_000, 'windows': 4_000_000,
-            'calculator': 2_000_000, 'terminal': 2_000_000}
+            'calculator': 2_000_000, 'terminal': 2_000_000,
+            'dreamer': 2_000_000}
 
 
 @app.function(image=image, volumes={'/vol': vol}, timeout=1800)
