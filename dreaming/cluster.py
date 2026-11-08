@@ -14,7 +14,7 @@ SOURCE = '/vol/runs/atlas_v2_first_5k/ckpt_005000.pt'
 PROTECTED = {'main', 'atlas_v2_first_5k', 'legacy_v1', 'tput1', 'prof64', 'prof32',
              *(f'audit_ab_{c}' for c in 'ABCDE')}
 LOCK_KEYS = ('lr', 'warmup', 'min_lr_frac', 'restart_iter', 'iters', 'batch', 'unroll',
-             'data', 'extra_data', 'extra_frac', 'extra_shards', 'holdout_episodes', 'source')
+             'data', 'extra_data', 'extra_frac', 'extra_shards', 'holdout_episodes', 'source', 'sampler_v2')
 
 
 def validate_run_id(run_id):
@@ -33,7 +33,7 @@ def config(run_id, phase='long', steps=None, end_iter=10000, start_iter=5000, **
     steps = end_iter - start_iter if steps is None else steps
     cfg = dict(run_id=run_id, phase=phase, steps=steps, start_iter=start_iter,
                end_iter=start_iter + steps, log_every=10,
-               ckpt_every=5000, guard_max_loss=2.0, lr=4e-4, warmup=200, min_lr_frac=0.1, restart_iter=5000,
+               ckpt_every=5000, sampler_v2=False, guard_max_loss=2.0, lr=4e-4, warmup=200, min_lr_frac=0.1, restart_iter=5000,
                iters=65000, batch=32, unroll=6, data='/vol/shards',
                extra_data='/vol/shards_cats_dense_v1', extra_frac=0.15, extra_shards=40,
                holdout_episodes=2, source=SOURCE, budget_hours=8., total_cap_hours=8.)
@@ -93,7 +93,7 @@ def torchrun_command(cfg, rank=0, master='127.0.0.1', resume=None):
     args.update(out=out, resume=resume if resume is not None else resume_path(out, cfg['source']), chunk=cfg['steps'])
     for key, value in args.items():
         cmd.extend([f'--{key}', str(value)])
-    return cmd + ['--compile', '--sync-fix', '--sampler-v2']
+    return cmd + ['--compile', '--sync-fix'] + (['--sampler-v2'] if cfg['sampler_v2'] else [])
 
 
 def run_with_deadline(cmd, kill_at, env=None, on_tick=None, tick_every=300, grace=60):

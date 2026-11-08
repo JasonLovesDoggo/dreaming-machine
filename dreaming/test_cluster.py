@@ -78,6 +78,8 @@ def test_config_lock_budget_and_command(tmp_path):
     lock_config(tmp_path, config('pilot-test', steps=5000))
     with pytest.raises(ValueError, match='mismatch'):
         lock_config(tmp_path, dict(cfg, lr=.01))
+    with pytest.raises(ValueError, match='mismatch'):
+        lock_config(tmp_path, dict(cfg, sampler_v2=True))
     assert check_budget([], 3600) == 0
     records = [dict(start=100, deadline=200), dict(start=200, deadline=300, end=250)]
     assert check_budget(records, 100, 250) == 150
@@ -94,7 +96,9 @@ def test_config_lock_budget_and_command(tmp_path):
     assert cmd[cmd.index('-m') + 1] == 'dreaming.warm_restart'
     assert cmd[cmd.index('--resume') + 1] == 'auto'
     assert cmd[cmd.index('--chunk') + 1] == '5000'
-    assert '--sync-fix' in cmd and '--sampler-v2' in cmd
+    assert '--sync-fix' in cmd and '--compile' in cmd and '--sampler-v2' not in cmd
+    assert cfg['sampler_v2'] is False
+    assert '--sampler-v2' in torchrun_command(config('pilot-test', sampler_v2=True))
 
 
 def test_resumed_publication_sets():
@@ -155,6 +159,48 @@ def test_dry_run_does_not_launch(monkeypatch, capsys):
     cluster_run.launch(dry_run=True)
     output = capsys.readouterr().out
     assert '"end_iter": 10000' in output and '--ckpt-every 5000' in output
+
+
+def test_launch_resumes_completed_numbered_checkpoint(monkeypatch, capsys):
+    monkeypatch.setenv('DREAMING_RUN_ID', 'resume-test')
+    import cluster_run
+    marker = dict(atlas_version=2, iter=10000)
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], True, marker))
+    monkeypatch.setattr(cluster_run, 'read_names', lambda: {'ckpt.pt', 'run.json', 'ckpt_010000.pt'})
+    cluster_run.launch(end_iter=15000, dry_run=True)
+    output = capsys.readouterr().out
+    assert f'--resume {cluster_run.OUT_DIR}/ckpt_010000.pt' in output
+    assert '--resume auto' not in output
+    monkeypatch.setattr(cluster_run, 'read_names', lambda: {'ckpt.pt', 'run.json'})
+    with pytest.raises(ValueError, match='refusing partial ckpt.pt'):
+        cluster_run.launch(end_iter=15000, dry_run=True)
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], True, None))
+    with pytest.raises(ValueError, match='without run.json'):
+        cluster_run.launch(end_iter=15000, dry_run=True)
+
+
+def test_eval_requires_completed_numbered_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv('DREAMING_RUN_ID', 'eval-test')
+    import cluster_run
+    monkeypatch.setattr(cluster_run, 'OUT_DIR', str(tmp_path))
+    called = []
+    monkeypatch.setattr(subprocess, 'run', lambda *args, **kwargs: called.append(args))
+    monkeypatch.setattr(cluster_run.out, 'commit', lambda: None)
+    monkeypatch.setattr(cluster_run.mirror_metrics, 'remote', lambda: None)
+    for name in ('ckpt.pt', '../ckpt_010000.pt', 'ckpt_1.pt', 'other.pt'):
+        with pytest.raises(ValueError, match='numbered'):
+            cluster_run._eval_ckpt(name)
+    with pytest.raises(ValueError, match='not complete'):
+        cluster_run._eval_ckpt('ckpt_010000.pt')
+    (tmp_path / 'run.json').write_text(json.dumps(dict(atlas_version=2, iter=10000)))
+    with pytest.raises(ValueError, match='not complete'):
+        cluster_run._eval_ckpt('ckpt_015000.pt')
+    assert called == []
+    (tmp_path / 'ckpt_010000.pt').touch()
+    cluster_run._eval_ckpt('ckpt_010000.pt')
+    assert called[0][0][called[0][0].index('--checkpoint') + 1] == str(tmp_path / 'ckpt_010000.pt')
+    with pytest.raises(TypeError):
+        cluster_run.eval()
 
 
 def test_publish_and_selector(tmp_path, monkeypatch):
