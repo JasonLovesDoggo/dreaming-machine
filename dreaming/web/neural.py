@@ -5,6 +5,7 @@ import json
 import os
 import numpy as np
 from ..dataset import OBS_KEYS
+from .storage import volume_read
 
 
 def _numbered(directory):
@@ -68,6 +69,7 @@ class Checkpoints:
         if self.current:
             self.load(self.current)
 
+    @volume_read
     def paths(self):
         paths = {}
         if self.dir and os.path.isdir(self.dir):
@@ -104,6 +106,7 @@ class Checkpoints:
     def current(self):
         return self.default_name()
 
+    @volume_read
     def load(self, name):
         path = self.paths()[name]
         if name not in self._loaded:

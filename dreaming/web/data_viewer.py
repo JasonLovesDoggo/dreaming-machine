@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from ..dataset import OBS_KEYS
 from ..os_sim import APP_SLOTS, FOCUS_COL, obs_to_pixels
 from .settings import SETTINGS
+from .storage import volume_read
 
 router = APIRouter(prefix='/data')
 MAX_CLIP = 128
@@ -36,6 +37,7 @@ def _path(dataset, name):
 
 
 @functools.lru_cache(maxsize=4)
+@volume_read
 def _shard(dataset, name):
     with np.load(_path(dataset, name)) as z:
         return {k: z[k] for k in z.files}
@@ -54,6 +56,7 @@ def _listing(dataset):
 
 
 @router.get('/datasets')
+@volume_read
 def datasets():
     return JSONResponse([dict(id=d, dir=os.path.basename(_root(d)), path=_root(d),
                               available=os.path.isdir(_root(d)), shards=len(_listing(d)))
@@ -61,6 +64,7 @@ def datasets():
 
 
 @router.get('/index')
+@volume_read
 def index(dataset: str = 'main'):
     """Shard names only (cheap glob, cached); episode lengths come from /data/shard on demand."""
     root = _root(dataset)
@@ -68,6 +72,7 @@ def index(dataset: str = 'main'):
 
 
 @functools.lru_cache(maxsize=4096)
+@volume_read
 def _ep_len(dataset, name):
     with np.load(_path(dataset, name)) as z:
         return z['ep_len'].tolist()

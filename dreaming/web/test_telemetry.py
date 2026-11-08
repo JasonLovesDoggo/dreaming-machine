@@ -12,6 +12,51 @@ from . import telemetry
 
 
 class TelemetryTest(unittest.TestCase):
+    def test_summary_parsing_does_not_hold_volume_lock(self):
+        parsing, release, refreshed = threading.Event(), threading.Event(), threading.Event()
+        loads = json.loads
+
+        def parse(line):
+            parsing.set()
+            if not release.wait(5):
+                raise TimeoutError('parsing was not released')
+            return loads(line)
+
+        def refresh():
+            telemetry.refresh_modal()
+            refreshed.set()
+
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, DREAMING_TELEMETRY_DIR=root), \
+                patch.multiple(telemetry, _volume=Mock(), _dirty=False, _started=True, _salt=None):
+            self.assertTrue(telemetry.write(telemetry.Event(visitor='v', session='s', page='/')))
+            with patch.object(telemetry.json, 'loads', side_effect=parse):
+                reader = threading.Thread(target=telemetry.summary)
+                refresher = threading.Thread(target=refresh)
+                reader.start()
+                try:
+                    self.assertTrue(parsing.wait(2))
+                    refresher.start()
+                    self.assertTrue(refreshed.wait(2), 'summary parsing blocked volume refresh')
+                finally:
+                    release.set()
+                    reader.join(2)
+                    if refresher.ident is not None:
+                        refresher.join(2)
+                self.assertFalse(reader.is_alive())
+                self.assertFalse(refresher.is_alive())
+
+    def test_summary_reads_across_chunk_boundaries(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, DREAMING_TELEMETRY_DIR=root), \
+                patch.multiple(telemetry, _volume=None, _dirty=False, _salt=None):
+            self.assertTrue(telemetry.write(telemetry.Event(visitor='v', session='s', page='/', kind='pageview')))
+            path = next(telemetry.directory().glob('*.jsonl'))
+            row = path.read_bytes()
+            count = (2 << 20) // len(row) + 1
+            path.write_bytes(row * count)
+            result = telemetry.summary()
+            self.assertEqual(result['pages'], {'/': count})
+            self.assertEqual(result['sessions'], 1)
+
     def test_refresh_commits_dirty_rows_before_reload(self):
         volume = Mock()
         with patch.multiple(telemetry, _volume=None, _dirty=True):

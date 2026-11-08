@@ -145,9 +145,9 @@ async function randomSpot() {
 async function init() {
   const token = change();
   await attempt(async () => {
-    const [datasets, config] = await Promise.all([
-      request('data/datasets').then(r => r.json()), request('config').then(r => r.json()),
-    ]);
+    const config = await (await request('config')).json();
+    if (token !== generation) return;
+    const datasets = await (await request('data/datasets')).json();
     if (token !== generation) return;
     if (!Array.isArray(config.pal) || !config.pal.length) throw new Error('invalid palette');
     pal = config.pal;
@@ -157,7 +157,12 @@ async function init() {
       option.disabled = !d.available || !d.shards;
       $('dataset').add(option);
     }
-    $('dataset').value = 'main';
+    const available = datasets.filter(d => d.available && d.shards);
+    if (!available.length) {
+      status('No datasets available. Retry after storage refresh.', init);
+      return;
+    }
+    $('dataset').value = available.some(d => d.id === 'main') ? 'main' : available[0].id;
     await pickDataset();
   }, init, token);
 }

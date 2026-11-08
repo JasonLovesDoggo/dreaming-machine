@@ -11,10 +11,11 @@ from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from .storage import volume_lock
 
 router = APIRouter(prefix='/telemetry')
 log = logging.getLogger(__name__)
-_lock = threading.Lock()
+_lock = volume_lock
 _started = False
 _dirty = False
 _salt = None
@@ -106,29 +107,45 @@ def ingest(event: Event, request: Request):
     return {'ok': True}
 
 
+def _rows():
+    with _lock:
+        paths = list(directory().glob('*.jsonl'))
+    for path in paths:
+        offset = 0
+        while True:
+            with _lock:
+                with path.open('rb') as f:
+                    f.seek(offset)
+                    chunk = f.read(1 << 20)
+                    if chunk and not chunk.endswith(b'\n'):
+                        chunk += f.readline(64 << 10)
+                    offset = f.tell()
+            if not chunk:
+                break
+            for line in chunk.splitlines():
+                try:
+                    yield json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+
+
 def _summary():
     visitors, sessions, pages = set(), {}, Counter()
     apps, actions, checkpoints = Counter(), Counter(), Counter()
     metrics = {'fps': [], 'latency_ms': []}
-    for path in directory().glob('*.jsonl'):
-        with path.open() as f:
-            for line in f:
-                try:
-                    row = json.loads(line)
-                except (ValueError, UnicodeError):
-                    continue
-                visitors.add(row['visitor'])
-                key = (row['visitor'], row['session'], row['page'])
-                sessions[key] = max(sessions.get(key, 0), row['duration'])
-                if row['kind'] == 'pageview':
-                    pages[row['page']] += 1
-                apps.update(row['apps'])
-                actions.update(row['actions'])
-                if row['checkpoint']:
-                    checkpoints[row['checkpoint']] += 1
-                for name, values in metrics.items():
-                    if row.get(name) is not None:
-                        values.append(row[name])
+    for row in _rows():
+        visitors.add(row['visitor'])
+        key = (row['visitor'], row['session'], row['page'])
+        sessions[key] = max(sessions.get(key, 0), row['duration'])
+        if row['kind'] == 'pageview':
+            pages[row['page']] += 1
+        apps.update(row['apps'])
+        actions.update(row['actions'])
+        if row['checkpoint']:
+            checkpoints[row['checkpoint']] += 1
+        for name, values in metrics.items():
+            if row.get(name) is not None:
+                values.append(row[name])
     count = len({(v, s) for v, s, p in sessions})
     total = sum(sessions.values())
     return dict(visitors=len(visitors), sessions=count, total_duration=total,
@@ -140,5 +157,4 @@ def _summary():
 
 @router.get('/summary')
 def summary():
-    with _lock:
-        return _summary()
+    return _summary()
