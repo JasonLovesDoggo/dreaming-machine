@@ -1,5 +1,5 @@
 """World model: transformer over (tile grid + cursor + doom tokens + action + memory + state queries)."""
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

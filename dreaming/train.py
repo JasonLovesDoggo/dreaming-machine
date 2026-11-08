@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from .dataset import load_shards, OBS_KEYS
-from .model import WorldModel, Config, compute_loss, decode, NT
+from .model import WorldModel, Config, compute_loss, decode
 from .tiles import VOCAB, PAL
 
 
@@ -64,36 +64,32 @@ def step_targets(b, i):
     return {k: b[k][:, i + 1] for k in OBS_KEYS}
 
 
-def save_rollout_png(path, model, b, mem0, L):
-    """Teacher-forced vs free-running rollout for the first sample, saved as an image grid."""
+def _pixels(obs):
     from .os_sim import obs_to_pixels
+    o = {k: v[0].cpu().numpy() for k, v in obs.items()}
+    o['grid'] = o['grid'].reshape(24, 32)
+    return obs_to_pixels(o)
+
+
+def save_rollout_png(path, model, b, mem0, L):
+    """Rows of [ground truth | teacher-forced | free-running] for the first sample of the batch."""
     from PIL import Image
     rows = []
     with torch.no_grad():
-        mem = mem0[:1]
-        mem_tf = mem0[:1]
+        mem_tf = mem_free = mem0[:1]
         free = None
         for i in range(L):
             x = {k: v[:1] for k, v in step_inputs(b, i).items()}
             out_tf, mem_tf = model(x, mem_tf)
-            xf = dict(x)
-            if free is not None:
-                for k in OBS_KEYS:
-                    xf[k] = free[k]
-            out_f, mem = model(xf, mem)
-            free = decode(out_f)
-            tf = decode(out_tf)
-            def px(o):
-                o = {k: v[0].cpu().numpy() for k, v in o.items()}
-                o['grid'] = o['grid'].reshape(24, 32)
-                return obs_to_pixels(o)
-            gt = {k: v[:1] for k, v in step_targets(b, i).items()}
-            rows.append(np.concatenate([px(gt), px(tf), px(free)], 1))
-    im = np.concatenate(rows[:: max(1, L // 6)], 0)
-    Image.fromarray(PAL[im]).save(path)
+            x_free = dict(x, **free) if free is not None else x
+            out_free, mem_free = model(x_free, mem_free)
+            free = {k: v for k, v in decode(out_free).items() if k in OBS_KEYS}
+            truth = {k: v[:1] for k, v in step_targets(b, i).items()}
+            rows.append(np.concatenate([_pixels(truth), _pixels(decode(out_tf)), _pixels(free)], 1))
+    Image.fromarray(PAL[np.concatenate(rows[::max(1, L // 6)], 0)]).save(path)
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', default='data/local')
     ap.add_argument('--out', default='runs/local')
@@ -114,115 +110,148 @@ def main():
     ap.add_argument('--ckpt-every', type=int, default=1000)
     ap.add_argument('--compile', action='store_true')
     ap.add_argument('--resume', default='')
-    a = ap.parse_args()
+    return ap.parse_args()
 
-    ddp = 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE']) > 1
-    if ddp:
+
+def setup_distributed():
+    """-> (rank, world, ddp). torchrun sets WORLD_SIZE / LOCAL_RANK."""
+    if int(os.environ.get('WORLD_SIZE', 1)) > 1:
         dist.init_process_group('nccl')
-        rank, world = dist.get_rank(), dist.get_world_size()
         torch.cuda.set_device(int(os.environ['LOCAL_RANK']))
-    else:
-        rank, world = 0, 1
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    master = rank == 0
-    os.makedirs(a.out, exist_ok=True)
+        return dist.get_rank(), dist.get_world_size(), True
+    return 0, 1, False
 
+
+def load_data(a, rank, world):
     paths = sorted(glob.glob(os.path.join(a.data, '*.npz')))
     paths = paths[rank::world] if len(paths) >= world else paths
     t0 = time.time()
     data = load_shards(paths, a.max_steps_data or None)
-    if master:
+    if rank == 0:
         print(f'loaded {len(data["action"])} steps/rank from {len(paths)} shards in {time.time() - t0:.0f}s', flush=True)
-    win = Windows(data, a.unroll, np.random.default_rng(1234 + rank))
+    return Windows(data, a.unroll, np.random.default_rng(1234 + rank))
+
+
+def load_checkpoint(a):
+    """Resolve --resume (auto = <out>/ckpt.pt if present) -> checkpoint dict or None."""
+    path = a.resume
+    if path == 'auto':
+        path = os.path.join(a.out, 'ckpt.pt')
+        if not os.path.exists(path):
+            return None
+    return torch.load(path, map_location='cpu') if path else None
+
+
+def build_optimizer(model, a, device):
+    decay = [p for p in model.parameters() if p.dim() >= 2]
+    no_decay = [p for p in model.parameters() if p.dim() < 2]
+    return torch.optim.AdamW([{'params': decay, 'weight_decay': 0.05}, {'params': no_decay, 'weight_decay': 0}],
+                             lr=a.lr, betas=(0.9, 0.95), fused=device == 'cuda')
+
+
+def lr_at(it, a):
+    """Linear warmup, then cosine decay to 10% over --iters."""
+    return a.lr * min(1, (it + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * it / a.iters)))
+
+
+def start_loader(win, batch, n_threads=2):
+    q = queue.Queue(maxsize=4)
+
+    def fill():
+        while True:
+            q.put(win.batch(batch))
+    for _ in range(n_threads):
+        threading.Thread(target=fill, daemon=True).start()
+    return q
+
+
+def unroll_loss(fwd, model, b, a, p_ss, p_cor, gen, device, agg):
+    """Run the recurrent unroll with scheduled sampling + input corruption on the grid; returns mean loss."""
+    B = b['grid'].shape[0]
+    mem, total, prev_pred = model.init_memory(B), 0, None
+    for i in range(a.unroll):
+        g_in = b['grid'][:, i]
+        if prev_pred is not None and p_ss > 0:
+            use_pred = torch.rand(B, 1, device=device, generator=gen) < p_ss
+            g_in = torch.where(use_pred, prev_pred, g_in)
+        if p_cor > 0:
+            rate = p_cor * torch.rand(B, 1, device=device, generator=gen)
+            noise = torch.rand(g_in.shape, device=device, generator=gen) < rate
+            g_in = torch.where(noise, torch.randint(0, VOCAB, g_in.shape, device=device, generator=gen), g_in)
+        out, mem = fwd(step_inputs(b, i, g_in), mem)
+        loss, parts = compute_loss(out, step_targets(b, i), b['grid'][:, i])
+        total = total + loss / a.unroll
+        prev_pred = out['grid'].detach().argmax(-1)
+        for k, v in parts.items():
+            agg[k] = agg.get(k, 0) + float(v.detach()) / a.unroll
+    return total
+
+
+def save_checkpoint(a, model, opt, cfg, it, b, amp):
+    ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it, opt=opt.state_dict(), args=vars(a))
+    torch.save(ck, os.path.join(a.out, 'ckpt.pt'))
+    torch.save(ck, os.path.join(a.out, f'ckpt_{it:06d}.pt'))
+    model.eval()
+    with amp:
+        save_rollout_png(os.path.join(a.out, f'rollout_{it:06d}.png'), model, b, model.init_memory(b['grid'].shape[0]),
+                         a.unroll)
+    model.train()
+    print(f'saved checkpoint at {it}', flush=True)
+
+
+def main():
+    a = parse_args()
+    rank, world, ddp = setup_distributed()
+    master = rank == 0
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    os.makedirs(a.out, exist_ok=True)
+    win = load_data(a, rank, world)
 
     cfg = Config(d=a.d, layers=a.layers, heads=a.heads, mem=a.mem)
     model = WorldModel(cfg).to(device)
-    start_it = 0
-    ck = None
-    if a.resume == 'auto' and os.path.exists(os.path.join(a.out, 'ckpt.pt')):
-        a.resume = os.path.join(a.out, 'ckpt.pt')
-    if a.resume and a.resume != 'auto':
-        ck = torch.load(a.resume, map_location=device)
+    opt = build_optimizer(model, a, device)
+    ck, start_it = load_checkpoint(a), 0
+    if ck is not None:
         model.load_state_dict(ck['model'])
+        if 'opt' in ck:
+            opt.load_state_dict(ck['opt'])
         start_it = ck.get('iter', 0)
         if master:
-            print(f'resumed from {a.resume} at iter {start_it}', flush=True)
+            print(f'resumed at iter {start_it}', flush=True)
     if master:
         print(f'params {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M vocab {VOCAB}', flush=True)
     fwd = torch.compile(model) if a.compile else model
     if ddp:
         fwd = DDP(fwd, device_ids=[int(os.environ['LOCAL_RANK'])])
-    decay = [p for n, p in model.named_parameters() if p.dim() >= 2]
-    nodecay = [p for n, p in model.named_parameters() if p.dim() < 2]
-    opt = torch.optim.AdamW([{'params': decay, 'weight_decay': 0.05}, {'params': nodecay, 'weight_decay': 0}],
-                            lr=a.lr, betas=(0.9, 0.95), fused=device == 'cuda')
-    if ck is not None and 'opt' in ck:
-        opt.load_state_dict(ck['opt'])
     amp = torch.autocast('cuda', dtype=torch.bfloat16) if device == 'cuda' else torch.autocast('cpu', enabled=False)
 
-    q = queue.Queue(maxsize=4)
-    def loader():
-        while True:
-            q.put(win.batch(a.batch))
-    for _ in range(2):
-        threading.Thread(target=loader, daemon=True).start()
-
+    batches = start_loader(win, a.batch)
     gen = torch.Generator(device=device).manual_seed(rank)
-    tl = time.time()
-    agg = {}
+    agg, t_log = {}, time.time()
     end_it = min(a.iters, start_it + a.chunk) if a.chunk else a.iters
     for it in range(start_it, end_it):
-        lr = a.lr * min(1, (it + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * it / a.iters)))
+        lr = lr_at(it, a)
         for g in opt.param_groups:
             g['lr'] = lr
         frac = it / a.iters
-        p_ss = a.ss_max * min(1, frac * 2)
-        p_cor = a.corrupt_max * min(1, frac * 3)
-        b = to_torch(q.get(), device)
-        B = b['grid'].shape[0]
-        mem = (model.init_memory(B))
-        total = 0
-        prev_pred = None
+        p_ss, p_cor = a.ss_max * min(1, frac * 2), a.corrupt_max * min(1, frac * 3)
+        b = to_torch(batches.get(), device)
         with amp:
-            for i in range(a.unroll):
-                g_in = b['grid'][:, i]
-                if prev_pred is not None and p_ss > 0:
-                    use = torch.rand(B, 1, device=device, generator=gen) < p_ss
-                    g_in = torch.where(use, prev_pred, g_in)
-                if p_cor > 0:
-                    m = torch.rand(g_in.shape, device=device, generator=gen) < p_cor * torch.rand(B, 1, device=device, generator=gen)
-                    g_in = torch.where(m, torch.randint(0, VOCAB, g_in.shape, device=device, generator=gen), g_in)
-                x = step_inputs(b, i, g_in)
-                out, mem = fwd(x, mem)
-                y = step_targets(b, i)
-                loss, parts = compute_loss(out, y, b['grid'][:, i])
-                total = total + loss / a.unroll
-                prev_pred = out['grid'].detach().argmax(-1)
-                for k, v in parts.items():
-                    agg[k] = agg.get(k, 0) + float(v.detach()) / a.unroll
+            total = unroll_loss(fwd, model, b, a, p_ss, p_cor, gen, device, agg)
         opt.zero_grad(set_to_none=True)
         total.backward()
         gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
         if master and (it + 1) % a.log_every == 0:
-            dt = time.time() - tl
-            sps = a.log_every * a.batch * a.unroll * world / dt
-            msg = ' '.join(f'{k} {v / a.log_every:.4f}' for k, v in agg.items())
+            sps = a.log_every * a.batch * a.unroll * world / (time.time() - t_log)
+            parts = ' '.join(f'{k} {v / a.log_every:.4f}' for k, v in agg.items())
             print(f'it {it + 1} loss {float(total):.4f} lr {lr:.2e} gn {float(gn):.2f} ss {p_ss:.2f} '
-                  f'| {msg} | {sps:.0f} samples/s', flush=True)
-            agg, tl = {}, time.time()
+                  f'| {parts} | {sps:.0f} samples/s', flush=True)
+            agg, t_log = {}, time.time()
         if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == end_it):
-            ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it + 1, opt=opt.state_dict(), args=vars(a))
-            torch.save(ck, os.path.join(a.out, 'ckpt.pt'))
-            torch.save(ck, os.path.join(a.out, f'ckpt_{it + 1:06d}.pt'))
-            model.eval()
-            with amp:
-                save_rollout_png(os.path.join(a.out, f'rollout_{it + 1:06d}.png'), model, b, model.init_memory(B),
-                                 a.unroll)
-            model.train()
-            print(f'saved checkpoint at {it + 1}', flush=True)
+            save_checkpoint(a, model, opt, cfg, it + 1, b, amp)
     if ddp:
         dist.destroy_process_group()
 

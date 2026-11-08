@@ -40,6 +40,8 @@ _GUN, _GUN_MASK, _FLASH, _FLASH_MASK = _gun_layers()
 
 def _walls(cols):
     wt, sd, h, u = [cols[:, i].astype(np.int64) for i in range(4)]
+    # predicted tokens can be out of range (e.g. an untrained model); clamp so any token renders
+    wt, sd, u = np.clip(wt, 0, TEX.shape[0] - 1), np.clip(sd, 0, 1), np.clip(u, 0, 15)
     hh = np.maximum(h, 1)
     top = (VH - hh) / 2
     v = ((_yy - top) / hh * 16).astype(np.int64)
