@@ -151,7 +151,7 @@ def test_badly_matched_edges_are_not_flattened():
     assert match_tile(patch.tobytes()) >= len(FILLS)
 
 
-def test_flight_extended_palette_pixel_transport():
+def test_flight_palette_pixel_transport():
     from .tiles import PAL
     from .web.play import encode
     from .web.images import png
@@ -161,8 +161,7 @@ def test_flight_extended_palette_pixel_transport():
     s.open_app('flight')
     ob = s.observe([])
     pixels = obs_to_pixels(ob)
-    assert PAL.shape == (18, 3)
-    assert pixels.max() < len(PAL)
+    assert PAL.shape == (16, 3)
     assert pixels.max() < len(PAL)
     encoded = encode([ob], False)
     assert encoded[2:] == pixels.astype(np.uint8).tobytes()
@@ -207,3 +206,13 @@ def test_autopilot_takes_off_lands_and_crashes():
             d.observe_events(obs['events'])
             events.update(obs['events'])
     assert events['flight_takeoff'] and events['flight_land'] and events['flight_crash']
+
+
+def test_mixed_mode_caps_flight_share():
+    from .driver import FLIGHT_SHARE, Driver
+    d = Driver(MicroOS(0), 0, 'mixed')
+    d.counts['step'] = 10_000
+    d.counts['flight_frames'] = int(FLIGHT_SHARE * 10_000) + 1
+    assert 'flight' not in {d.choose_task() for _ in range(2000)}
+    d.counts['flight_frames'] = 0
+    assert 'flight' in {d.choose_task() for _ in range(2000)}

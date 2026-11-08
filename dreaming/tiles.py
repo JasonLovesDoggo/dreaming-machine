@@ -9,8 +9,7 @@ SCREEN_W, SCREEN_H = GW * T, GH * T
 PAL = np.array([
     (0, 0, 0), (0, 0, 128), (128, 0, 0), (0, 128, 128), (139, 90, 43), (80, 80, 80),
     (192, 192, 192), (255, 255, 255), (255, 0, 64), (255, 153, 0), (255, 224, 32),
-    (32, 192, 64), (48, 160, 255), (224, 176, 128), (32, 96, 48), (128, 48, 128),
-    (123, 176, 221), (42, 76, 53)], np.uint8)
+    (32, 192, 64), (48, 160, 255), (224, 176, 128), (32, 96, 48), (128, 48, 128)], np.uint8)
 (K, NAVY, DRED, TEAL, BROWN, DGRAY, LGRAY, WHITE, RED, ORANGE, YELLOW, GREEN, BLUE, TAN, DGREEN,
  PURPLE) = range(16)
 CANVAS_COLORS = [WHITE, K, RED, BLUE, GREEN, YELLOW, BROWN, LGRAY]

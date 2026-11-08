@@ -38,6 +38,8 @@ BASE_W['terminal'] = 1.2
 BASE_W['dreamer'] = 1.5
 BASE_W['flight'] = 1.2
 TASK_EVENTS['flight'] = ['flight_fly', 'flight_crash', 'flight_reset', 'flight_takeoff', 'flight_land']
+FLIGHT_STEPS = (200, 600)  # autopilot frames per Flight session
+FLIGHT_SHARE = .07  # mixed mode skips Flight while it has used more than this share of all frames
 
 
 class Driver:
@@ -984,6 +986,8 @@ class Driver:
         for task, evs in TASK_EVENTS.items():
             least = min((self.counts[e] for e in evs), default=0)
             ws[task] = BASE_W[task] / math.sqrt(1 + least)
+        if self.counts['flight_frames'] > FLIGHT_SHARE * self.counts['step']:
+            ws['flight'] = 0.
         tasks = list(ws)
         return self.rng.choices(tasks, weights=[ws[t] for t in tasks])[0]
 
@@ -1040,9 +1044,13 @@ class Driver:
                     break
                 yield from self.close(blocking)
         yield from self.open_app('flight')
-        budget = [self.rng.randint(500, 1400)]
+        budget = [self.rng.randint(*FLIGHT_STEPS)]
+        if self.os.flight.airborne and not self.os.flight.crash and self.rng.random() < .5:
+            yield from self._flight_approach(budget)
         while budget[0] > 0 and self.os.focus == 'flight':
             yield from self._flight_maneuver(budget)
+        if self.mode == 'mixed' and 'flight' in self.os.z and self.rng.random() < .8:
+            yield from self.close('flight')
 
     def _flight_keys(self):
         char = lambda c: KEY_CHAR0 + CHARSET.index(c)
@@ -1171,6 +1179,8 @@ class Driver:
 
     def observe_events(self, events):
         self.counts.update(events)
+        self.counts['step'] += 1
+        self.counts['flight_frames'] += self.os.focus == 'flight'
         assert not calc.forbidden(self.os.calc), 'held-out x24 calculation leaked into the data'
 
     def _guarded(self, stream):

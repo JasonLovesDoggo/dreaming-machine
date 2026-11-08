@@ -1,69 +1,38 @@
-# Flight simulator cockpit preview
+# Flight simulator (simplified, learnable)
 
-Open FLIGHT on the desktop. W/S controls power, arrows pitch/bank, A/D rudder,
-Enter restarts. Gentle runway contact lands; other ground contact crashes and
-resets after a 30-step message. Physics, scenery and clouds are deterministic.
+Open FLIGHT on the desktop. W/S throttle, Up/Down pitch, Left/Right bank, A/D rudder,
+Enter resets. Gentle contact with a runway lands; water, sand or grass crashes and the
+windscreen cracks until reset.
 
-The 30x22-tile window contains a 224x152 first-person cockpit. The outside view
-uses four-octave seeded gradient Perlin fBm (lacunarity 2, gain 0.5) with sea,
-sand, green lowlands, darker uplands and two smoothly flattened airfields.
-The terrain heightfield is perspective-projected at full pixel resolution
-before tile matching. Clouds use an independent fBm field with soft density
-falloff and dithered opacity. Pitch moves the horizon; bank tilts it. Angled window struts, button
-clusters and a dashboard frame three readable instruments: airspeed, attitude,
-altitude. Gauges use 16 needle angles and 15 pitch/bank attitude-ball variants.
-Charcoal dashboard, thick edged struts and dark dial faces frame the view.
-Crashes crack the windscreen as well as displaying the reset message.
-A minimal green strip shows altitude/speed/heading or the crash/reset message.
+## World and view
 
-## Detailed tiles, zero model parameters
+The world is deliberately tiny so each frame depends on a handful of numbers
+(attitude, heading, altitude, position relative to the islands):
 
-The outside scene is rasterized at pixel resolution and each 8x8 cell is matched
-to the closest dedicated flight tile by pixel mismatch. The library contains
-eight flat fills, 584 angled/offset edge tiles covering every pair of the
-outside colours, and 12 haze blend tiles. Coast/land and cloud/sky-band pairs have
-16 angles and three offsets, and
-other pairs have eight angles and a central offset. Every two-colour
-boundary selects an edge tile, never a solid fill. Exact blend patterns retain
-their blend tile. This keeps sub-tile boundary detail rather than
-the rejected 4x4-pixel Paint-cell quantization. Cockpit art is fixed tile art;
-needles and attitude indicators are small tile variants.
+- flat ocean and sky,
+- two flat elliptical islands (`AIRFIELDS`) with sand rim, grass and a marked runway,
+- one to three clouds placed by a seeded RNG.
 
-All art is deduplicated per 8x8 tile, so static gauge parts are shared across
-needle angles and instruments; only crossed tiles vary. Flight uses 857 unique
-tiles: 256 in app_flight and 601 at the start of app_spare (2304..2904).
-Flight reserves at most the first 768 app_spare IDs (2304..3071), for a hard
-1024-tile total limit. The larger reservation buys finer edge angles/offsets
-instead of increasing model parameters. No IDs present on main are renumbered.
-Distant runway details are
-suppressed instead of becoming gray blocks; nearby runways retain white markings.
-Two Flight-only colours are appended to the display palette: light sky/haze blue
-and dark muted green. Sea, sand and mid-green use existing colours. Existing palette entries and
-all main tile pixels stay unchanged. Sky and sea fills are flat; only a thin
-horizon haze band is dithered. The web transport and recorded-data viewer already
-carry uint8 palette indices and obtain the palette dynamically, so need no changes.
-Clouds use a raised noise threshold targeting roughly 5–15% sky coverage, with
-horizontally stretched, smoothed small puffs restricted above the horizon.
-Indicator clusters are removed. The dashboard is only 24 pixels high, half its
-previous height, with three 16x16 gauges assembled from 2x2 tile parts. The
-outside scene gains 24 vertical pixels; status text remains below the view.
+`render.py` projects this scene at full pixel resolution into a 224x152 first-person
+cockpit (dark frame, angled struts, 24-px dashboard with speed / attitude / altitude
+gauges) and snaps each 8x8 cell to the closest dedicated flight tile (fills, two-colour
+edge tiles at quantized angles/offsets, cockpit and gauge tiles). Everything is
+deterministic per seed; resets pick (reproducibly, per seed and episode) runway or
+approach spawns at either airfield.
 
-There are **zero new model parameters, heads, embeddings, observation keys or
-sequence positions**. The 532 cockpit/view tokens are ordinary tiles within the
-existing 768-token screen. model.py, dataset.py and train.py match main exactly.
-Flight is appended after Calculator, Terminal and Dreamer on the desktop. Flight owns
-its reserved app state slot and extension fields 12..15; Calculator owns 0..3,
-Terminal 4..7, and Dreamer 8..11.
+## Zero model parameters
 
-Repository investigation (including Pictures #8): pictures/draw.py draws an
-8-colour 32x20 array with continuous-coordinate vector primitives, which Paint
-maps through canvas_id into tiles with four 4x4 colour cells. No finer image-tile
-helper exists on current main. The flight library instead reuses the atlas's
-8x8 pixel-array convention and grid_to_pixels renderer, extending that same
-fixed-art principle to detailed edges and gauges.
+Flight is drawn entirely with ordinary tile IDs inside the existing 32x24 grid: no new
+heads, embeddings, observation keys or sequence positions, and `model.py`, `dataset.py`
+and `train.py` are unchanged. Its 719 unique tiles live in `app_flight` (256) plus the
+first IDs of `app_spare` (Flight claims at most 2304..3071); no existing ID moves and the
+palette is unchanged. State uses the reserved app slot plus ext fields 12..15
+(altitude, speed, throttle, crash).
 
-Driver patterns cover takeoff, cruise, turns, climbs, dives, landing attempts,
-crashes and noisy interactions. Focused simulation: Driver(sim, seed, 'flight').
-The Flight task closes windows obstructing its desktop icon before opening it;
-right-aligning wide windows alone cannot uncover the newer icon columns.
-Preview endpoint: /sprites/flight. No training or Modal job is needed.
+## Driver
+
+`Driver.task_flight` runs a short randomized closed-loop autopilot session
+(`FLIGHT_STEPS`): takeoffs, cruise, left/right turns, climbs/dives, landing approaches
+with go-arounds, deliberate crashes, resets and random key presses. Its mixed-mode weight
+is kept low so Flight stays a small share of mixed frames. Focused data:
+`Driver(sim, seed, 'flight')`. Preview sheet: `/sprites/flight`.
