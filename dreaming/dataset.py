@@ -8,7 +8,7 @@ from multiprocessing import Pool
 import numpy as np
 from .os_sim import MicroOS
 from .driver import Driver
-from .pictures import parse_name
+from .pictures import parse_name, parse_words
 
 OBS_KEYS = ['grid', 'cursor', 'doom_cols', 'doom_spr', 'doom_meta', 'state']
 
@@ -28,6 +28,9 @@ def run_episode(seed, length, mode='mixed', stats=None):
             if 'ex_open_png' in obs['events']:
                 stats['picture_opens'][o.pt_file] += 1
                 stats['subjects'].update(set(parse_name(o.pt_file)) or {'abstract'})
+                cat_words = next((kws for kws, c in parse_words(o.pt_file) if c == 'cat'), None)
+                if cat_words is not None:
+                    stats.setdefault('cat_terms', Counter()).update(set(cat_words))
         acts.append(a)
         for k in OBS_KEYS:
             rec[k].append(obs[k])
@@ -39,7 +42,7 @@ def run_episode(seed, length, mode='mixed', stats=None):
 
 def make_shard(args):
     path, shard_idx, n_eps, ep_len, base_seed, mode = args
-    stats = {k: Counter() for k in ('picture_opens', 'subjects', 'focus')}
+    stats = {k: Counter() for k in ('picture_opens', 'subjects', 'focus', 'cat_terms')}
     seeds = [base_seed * 10_000_000 + shard_idx * 1000 + e for e in range(n_eps)]
     eps = [run_episode(seed, ep_len, mode, stats) for seed in seeds]
     data = {k: np.concatenate([e[k] for e in eps]) for k in eps[0]}
@@ -86,6 +89,6 @@ if __name__ == '__main__':
     ap.add_argument('--eps-per-shard', type=int, default=25)
     ap.add_argument('--workers', type=int, default=os.cpu_count())
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--mode', default='mixed', choices=['mixed', 'doom', 'cards', 'windows', 'calculator', 'terminal', 'dreamer'])
+    ap.add_argument('--mode', default='mixed', choices=['mixed', 'doom', 'cards', 'windows', 'calculator', 'terminal', 'dreamer', 'cats'])
     a = ap.parse_args()
     generate(a.out, a.steps, a.ep_len, a.eps_per_shard, a.workers, a.seed, mode=a.mode)

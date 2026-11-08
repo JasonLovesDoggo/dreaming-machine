@@ -90,6 +90,7 @@ def test_generated_data_never_multiplies_by_24():
         n, _ = scan_episode(seed, 'calculator', 3000)
         total += n
     n, _ = scan_episode(100, 'mixed', 6000)
+    n, _ = scan_episode(101, 'cats', 4000)
     assert total > 1000
 
 
