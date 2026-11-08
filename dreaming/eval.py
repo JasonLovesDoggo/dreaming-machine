@@ -14,6 +14,7 @@ from .tiles import ATLAS, VOCAB
 from .train import Windows, load_training_shards, shard_mode, step_inputs, step_targets, to_torch
 
 MODES = ['mixed', 'doom', 'cards', 'windows', 'calculator', 'terminal', 'dreamer']
+HELDOUT_SEED_BASE = 100_000_000
 
 
 def heldout_paths(directory, exclude_directory='', cats_directory=''):
@@ -98,7 +99,7 @@ def main():
     ap.add_argument('--exclude-data', default='')
     ap.add_argument('--cats-data', default='')
     ap.add_argument('--holdout-episodes', type=int, default=0)
-    ap.add_argument('--generate-heldout', action='store_true', help='generate fresh seed-991+ per-app episodes in --data')
+    ap.add_argument('--generate-heldout', action='store_true', help='generate reserved-base-seed per-app episodes in --data')
     ap.add_argument('--windows', type=int, default=2000)
     ap.add_argument('--batch', type=int, default=8)
     ap.add_argument('--starts', type=int, default=20)
@@ -106,7 +107,7 @@ def main():
     a = ap.parse_args()
     if a.generate_heldout:
         for i, mode in enumerate(MODES):
-            generate(a.data, 4000, ep_len=2000, eps_per_shard=2, workers=1, seed=991 + i, mode=mode)
+            generate(a.data, 4000, ep_len=2000, eps_per_shard=2, workers=1, seed=HELDOUT_SEED_BASE + i, mode=mode)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     ck = torch.load(a.checkpoint, map_location='cpu', weights_only=False)
     model = WorldModel(Config(**ck['cfg'])).to(device).eval()

@@ -176,12 +176,12 @@ def load_data(a, rank, world):
     paths = sorted(glob.glob(os.path.join(a.data, '*.npz')))
     paths = paths[rank::world] if len(paths) >= world else paths
     t0 = time.time()
-    def windows(paths, seed):
+    def windows(paths, seed, mode_mix=None):
         data = load_training_shards(paths, a.max_steps_data or None, a.holdout_episodes)
-        return Windows(data, a.unroll, np.random.default_rng(seed), a.sampler_v2, a.mode_mix)
+        return Windows(data, a.unroll, np.random.default_rng(seed), a.sampler_v2, mode_mix)
     if a.mode_mix is not None and (not a.sampler_v2 or not isinstance(a.mode_mix, dict)):
         raise ValueError('--mode-mix requires --sampler-v2 and a JSON object')
-    win = windows(paths, 1234 + rank)
+    win = windows(paths, 1234 + rank, a.mode_mix)
     if rank == 0:
         print(f'loaded {len(win.d["action"])} steps/rank from {len(paths)} shards in {time.time() - t0:.0f}s', flush=True)
     if a.extra_data:

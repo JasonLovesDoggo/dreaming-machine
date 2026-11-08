@@ -41,8 +41,14 @@ python -m dreaming.eval --checkpoint runs/local/ckpt.pt --data /vol/shards \
 ```
 
 Alternatively, `--generate-heldout` generates two fresh 2,000-step episodes per app
-with seeds 991–997 in a separate `--data` directory. These seeds must never be used
-for training. Evaluation samples uniformly with seed 7341, masks tile logits to
+with reserved base seeds 100,000,000–100,000,006 in a separate `--data` directory.
+`dataset.make_shard` derives episode seeds as `base_seed * 10,000,000 + shard *
+1000 + episode`. With one shard and two episodes per mode, generated evaluation
+episode seeds are 1,000,000,000,000,000 + mode_index * 10,000,000 + {0,1}.
+These are disjoint from the standard training generation bases (1000+ container
+index; specials 2000+); reserve these base seeds exclusively for evaluation.
+Never include the generated directory in training or extra sources. Evaluation
+samples uniformly with seed 7341, masks tile logits to
 `ATLAS.used`, and reports per-mode grid CE, all/changed accuracy, and copy-last
 accuracy over 2,000 windows. Autonomous rollouts use 20 starts and 30/120-step
 horizons, predicted observations with recorded external actions, and per-step

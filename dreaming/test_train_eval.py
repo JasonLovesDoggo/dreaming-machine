@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from .eval import evaluate_mode, heldout_paths
+from .eval import HELDOUT_SEED_BASE, evaluate_mode, heldout_paths
 from .model import Config, WorldModel
 from .os_sim import STATE_VOCAB
 from .tiles import ATLAS
@@ -79,6 +79,32 @@ def test_extra_shard_cap(tmp_path):
                            extra_frac=0.15, extra_shards=41)
     with pytest.raises(ValueError, match='shard cap'):
         load_data(args, 0, 1)
+
+
+def test_mode_mix_only_applies_to_primary(tmp_path):
+    primary, extra = tmp_path / 'primary', tmp_path / 'extra'
+    primary.mkdir()
+    extra.mkdir()
+    d = dataset()
+    d.pop('mode')
+    np.savez(primary / 'shard_mixed_001_00000.npz', **d)
+    for i in range(2):
+        np.savez(extra / f'shard_cats_001_{i:05d}.npz', **d)
+    args = SimpleNamespace(data=str(primary), max_steps_data=0, holdout_episodes=0,
+                           sampler_v2=True, mode_mix={'mixed': 1}, unroll=2,
+                           extra_data=str(extra), extra_frac=0.25, extra_shards=1)
+    win = load_data(args, 0, 1)
+    assert isinstance(win, MixedWindows)
+    assert set(win.extra.d['mode']) == {'cats'}
+    assert win.batch(4)['grid'].shape[0] == 4
+
+
+def test_reserved_heldout_seeds():
+    heldout = {((HELDOUT_SEED_BASE + i) * 10_000_000 + e) for i in range(7) for e in range(2)}
+    training = {base * 10_000_000 + shard * 1000 + e
+                for base in range(1000, 3000) for shard in (0, 999) for e in (0, 24)}
+    assert heldout.isdisjoint(training)
+    assert min(heldout) > max(training)
 
 
 def test_sync_metrics_and_eval():
