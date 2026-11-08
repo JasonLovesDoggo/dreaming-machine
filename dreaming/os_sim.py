@@ -6,24 +6,29 @@ from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, gr
                     NCH, CHARSET)
 from . import doom as dm
 from . import pictures as pics
+from .apps import calculator as calc_app
 
-APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13)}
+APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13),
+             'calculator': (calc_app.W, calc_app.H)}
 APPS = list(APP_SIZES)
 # Fixed OS-state slots: existing apps keep their slot forever; new apps take a reserved one (never reorder).
 APP_SLOTS = ['explorer', 'paint', 'cards', 'doom', 'notepad', 'calculator', 'terminal', 'dreamer', 'flight', 'spare']
 assert all(a in APP_SLOTS for a in APPS)
 FOCUS_COL = 3 * len(APP_SLOTS)
 EXT_FIELDS, EXT_VOCAB = 16, 32  # spare per-app state fields at the end of the state vector
-APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM', 'notepad': 'NOTEPAD'}
-DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6)}
+APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM', 'notepad': 'NOTEPAD', 'calculator': 'CALC'}
+DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6), 'calculator': (18, 3)}
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
 KEY_CHAR0 = 9  # typed characters: KEY_CHAR0 + index into CHARSET (space = 9)
-NKEYS = KEY_CHAR0 + NCH
+KEY_EXTRA0 = KEY_CHAR0 + NCH  # typed symbols with no font glyph (append only): KEY_EXTRA0 + index into EXTRA_KEYS
+EXTRA_KEYS = '+*='
+KEY_PLUS, KEY_TIMES, KEY_EQUALS = (KEY_EXTRA0 + EXTRA_KEYS.index(ch) for ch in '+*=')
+NKEYS = KEY_EXTRA0 + len(EXTRA_KEYS)
 NP_COLS, NP_ROWS, NP_MAX = 32, 10, 600
 DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('explorer', 'TRASH')),
               ('picture', 'PICS', ('explorer', 'C:/PICS')), ('paint', 'PAINT', ('paint', None)),
               ('cards', 'CARDS', ('cards', None)), ('doom', 'DOOM', ('doom', None)),
-              ('notepad', 'NOTES', ('notepad', None))]
+              ('notepad', 'NOTES', ('notepad', None)), ('calc', 'CALC', ('calculator', None))]
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
@@ -102,6 +107,7 @@ class MicroOS:
         self.new_doc = 1
         self.deal_no = 0
         self.doom = dm.Doom()
+        self.calc = calc_app.Calc()
         self._reset_app('explorer'); self._reset_app('paint'); self._reset_app('cards'); self._reset_app('notepad')
         return self.observe([])
 
@@ -136,6 +142,8 @@ class MicroOS:
             self.np_text = self.texts.get(arg, '') if arg else ''
         elif app == 'doom':
             self.doom.reset()
+        elif app == 'calculator':
+            self.calc = calc_app.Calc()
 
     @property
     def focus(self):
@@ -167,7 +175,7 @@ class MicroOS:
             self.pt_drawing = False
         self.z.remove(app)
         self.pos.pop(app, None)
-        if app in ('paint', 'notepad'):
+        if app in ('paint', 'notepad', 'calculator'):
             self._reset_app(app)
         if app == 'cards':
             self.c_press, self.c_dragging = None, False
@@ -217,6 +225,8 @@ class MicroOS:
             fire = press and self._in_doom_view(mx, my)
             dkey = key if key in (1, 2, 3, 4, 5) else (KEY_FIRE if key == KEY_CHAR0 else 0)
             events += self.doom.step(dkey, fire)
+        if 'calculator' in self.z:
+            self.calc.tick()
         if 'paint' in self.z and self.pt_load < 10:
             self.pt_load += 1
             if self.pt_load == 10:
@@ -281,7 +291,7 @@ class MicroOS:
         if key == KEY_ESC and app:
             self.close_app(app, events)
         elif app == 'notepad':
-            if key >= KEY_CHAR0 and len(self.np_text) < NP_MAX:
+            if KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.np_text) < NP_MAX:
                 self.np_text += CHARSET[key - KEY_CHAR0]
                 events.append('np_type')
             elif key == KEY_ENTER and len(self.np_text) < NP_MAX and len(self._np_lines(self.np_text)) < 40:
@@ -290,6 +300,10 @@ class MicroOS:
             elif key == KEY_DEL and self.np_text:
                 self.np_text = self.np_text[:-1]
                 events.append('np_backspace')
+        elif app == 'calculator':
+            tok = calc_app.key_token(key)
+            if tok:
+                events.append(self.calc.press(tok))
         elif app == 'explorer':
             items = self.fs[self.ex_path]
             if key == KEY_DOWN and items:
@@ -343,7 +357,7 @@ class MicroOS:
         return any(n == name for folder in self.fs.values() for n, _ in folder)
 
     def _ex_name_key(self, key, events):
-        if key >= KEY_CHAR0:
+        if KEY_CHAR0 <= key < KEY_EXTRA0:
             if len(self.ex_naming) < 20:
                 self.ex_naming += CHARSET[key - KEY_CHAR0]
                 events.append('ex_name_type')
@@ -495,6 +509,12 @@ class MicroOS:
                 self.fs['C:/DOCS'].append((self.np_file, 'txt'))
             self.texts[self.np_file] = self.np_text
             events.append('np_save')
+
+    # ------------------------------------------------------------------ calculator
+    def _press_calculator(self, mx, my, lc, lr, dbl, events):
+        tok = calc_app.button_token(lc, lr)
+        if tok:
+            events.append(self.calc.press(tok))
 
     # ------------------------------------------------------------------ cards
     def _tab_visible(self, k):
@@ -771,6 +791,9 @@ class MicroOS:
             lines = self._np_lines(self.np_text + '_')[-NP_ROWS:]
             for i, line in enumerate(lines):
                 put_text(g, wr + 2 + i, wc + 1, line.ljust(NP_COLS), 'body')
+        elif app == 'calculator':
+            wc, wr, w, h = self._frame(g, app, 'CALC', 'hud')
+            calc_app.render(g, self.calc, wc, wr)
 
     # ------------------------------------------------------------------ observation
     def observe(self, events):
@@ -785,8 +808,12 @@ class MicroOS:
                     doom_meta=meta, state=self.state_vector(), events=events)
 
     def ext_state_fields(self):
-        """Spare state fields for new apps; each app claims a fixed sub-range and leaves the rest zero."""
-        return [0] * EXT_FIELDS
+        """Spare state fields for new apps; each app claims a fixed sub-range and leaves the rest zero.
+        [0:4] calculator: pending op (0-4), error, display length (0-9), flashing button + 1 (0-16)."""
+        f = [0] * EXT_FIELDS
+        if 'calculator' in self.z:
+            f[0:4] = self.calc.state_fields()
+        return f
 
     def state_vector(self):
         f = []
@@ -809,7 +836,8 @@ class MicroOS:
         return np.array(f, np.uint8)
 
 
-STATE_VOCAB = [2, 32, 24] * len(APP_SLOTS) + [len(APP_SLOTS) + 1, 2, 2, 10, 8, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
+# desk_sel (5th field after the app slots) has room for 15 desktop icons
+STATE_VOCAB = [2, 32, 24] * len(APP_SLOTS) + [len(APP_SLOTS) + 1, 2, 2, 10, 16, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
                                  2, 8, 11, 16, 12, 16, 11, 11, 10] + [EXT_VOCAB] * EXT_FIELDS
 
 

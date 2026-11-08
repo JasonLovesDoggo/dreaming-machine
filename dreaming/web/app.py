@@ -4,6 +4,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ..tiles import PAL, CHARSET
+from ..os_sim import EXTRA_KEYS, KEY_EXTRA0
 from . import atlas, data_viewer, play, telemetry
 from .neural import CHECKPOINTS
 from .settings import SETTINGS
@@ -32,7 +33,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None):
 
     @app.get('/config')
     def config():
-        return JSONResponse(dict(pal=PAL.tolist(), charset=CHARSET, sections=atlas.sections_json(),
+        return JSONResponse(dict(pal=PAL.tolist(), charset=CHARSET, extra_keys=EXTRA_KEYS, key_extra0=KEY_EXTRA0, sections=atlas.sections_json(),
                                  ckpts=CHECKPOINTS.names(), current=CHECKPOINTS.current))
 
     return app

@@ -14,6 +14,7 @@ from .os_sim import MicroOS, obs_to_pixels
 from .driver import Driver, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, KEY_CHAR0
 from .tiles import PAL, CHARSET, SCREEN_W, SCREEN_H
 from .dataset import OBS_KEYS
+from .apps import calculator as calc
 
 MODEL = 'gpt-6.1-terra'
 KEYS = dict(UP=KEY_UP, DOWN=KEY_DOWN, LEFT=KEY_LEFT, RIGHT=KEY_RIGHT, FIRE=KEY_FIRE, ENTER=KEY_ENTER, ESC=KEY_ESC,
@@ -108,7 +109,9 @@ def run_episode(seed, length, model, key, log=None):
         n0 = len(acts)
         for a in plan.get('actions', [])[:12]:
             for act in expand(d, a if isinstance(a, dict) else {}):
+                act = calc.guard_action(o, act)
                 obs = o.step(act)
+                assert not calc.forbidden(o.calc), 'held-out x24 calculation leaked into the data'
                 acts.append(act)
                 for k in OBS_KEYS:
                     rec[k].append(obs[k])

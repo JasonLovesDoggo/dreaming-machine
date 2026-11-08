@@ -80,9 +80,13 @@ ICON_ART = {
     'doom': ["................", ".rrrrrrrrrrrrrr.", ".rrrrwwwwwwrrrr.", ".rrrwwwwwwwwrrr.", ".rrwwwwwwwwwwrr.",
              ".rrwwkkwwkkwwrr.", ".rrwwkkwwkkwwrr.", ".rrwwwwwwwwwwrr.", ".rrrwwwkkwwwrrr.", ".rrrrwwwwwwrrrr.",
              ".rrrrwkwkwkrrrr.", ".rrrrwwwwwwrrrr.", ".rrrrrrrrrrrrrr.", "................", "................", "................"],
+    'calc': ["................", "...kkkkkkkkkk...", "...kkkkkkkkkk...", "...kddddddddk...", "...kddOdOOOdk...",
+             "...kddddddddk...", "...kkkkkkkkkk...", "...kOkOkOkOOk...", "...kkkkkkkkkk...", "...kOkOkOkOOk...",
+             "...kkkkkkkkkk...", "...kOkOkOkOOk...", "...kkkkkkkkkk...", "...kOkOkOkOOk...", "...kkkkkkkkkk...",
+             "................"],
 }
 ART_COLORS = {'o': TAN, 'y': YELLOW, 'd': DGRAY, 'g': LGRAY, 'k': K, 's': BLUE, 'G': GREEN, 'r': RED, 'b': BLUE,
-              'w': WHITE}
+              'w': WHITE, 'O': ORANGE}
 MINI_ART = {
     'folder': ["........", ".ooo....", ".oyyoooo", ".yyyyyyo", ".yyyyyyo", ".yyyyyyo", ".oooooo.", "........"],
     'file': ["........", ".kkkk...", ".kwwwk..", ".kwwwwk.", ".kwwwwk.", ".kwwwwk.", ".kkkkkk.", "........"],
@@ -199,6 +203,10 @@ def build_atlas():
     for name, art in MINI_ART.items():
         for sel in (False, True):
             A.add(('mini', name, sel), art_tile(art, BLUE if sel else WHITE))
+    A.__exit__()
+    from .apps import calculator
+    A.section('app_calculator')
+    calculator.add_tiles(A)
     A.__exit__()
     A.section('core').cursor = A.ranges[('core',)][1]
     for i, c in enumerate(CANVAS_COLORS):
