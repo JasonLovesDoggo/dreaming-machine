@@ -1,6 +1,6 @@
 """Terminal integration and interpreter regression checks."""
 from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB
-from .tiles import CHARSET, VOCAB
+from .tiles import ATLAS, BLUE, CHARSET, NEO_LOGO, VOCAB
 
 
 def command(os, text):
@@ -96,8 +96,43 @@ def test_stars():
     assert o.term.lines[-1] == 'OK'
 
 
+def test_neofetch():
+    o = MicroOS(42)
+    o.open_app('terminal')
+    o.t = 42 * 60
+    events = []
+    o.term.command('NEOFETCH', events)
+    assert events == ['neofetch']
+    output = o.term.lines[-11:]
+    assert output[0] == (0, 'DREAMER/DREAMING')
+    assert 'UPTIME: 42 MIN' in output and 'APPS: 1' in output
+    for line in output:
+        text = line[1] if isinstance(line, tuple) else line
+        assert len(text) <= (22 if isinstance(line, tuple) else 36)
+        assert all(c in CHARSET for c in text)
+    grid = o.observe([])['grid']
+    wc, wr = o.pos['terminal']
+    for r in range(3):
+        for c in range(7): assert grid[wr + 1 + r, wc + 1 + c] == ATLAS[('neo_logo', r, c)]
+    assert len(NEO_LOGO) == 24 and all(len(row) == 56 for row in NEO_LOGO)
+    assert (ATLAS.array[ATLAS[('neo_logo', 0, 0)]] == BLUE).any()
+    assert ATLAS[('term_bar', 'red', 8)] == 1536 + 26
+    command(o, 'ECHO SCROLL')
+    assert o.observe([])['grid'][wr + 1, wc + 1] == ATLAS[('neo_logo', 2, 0)]
+    obs = command(o, 'NEOFETCH -WAKE')
+    assert 'neofetch' in obs['events'] and 'neofetch_egg' in obs['events']
+    assert o.term.lines[-11:-8] == [(0, 'DREAMER/DREAMING'), (1, '-----'), (2, 'HOST: INSIDE THE MODEL')]
+    assert o.term.lines[-1] == 'NOTHING HERE IS REAL. KEEP PLAYING.'
+    assert 'term_error' in command(o, 'NEOFETCH BAD')['events']
+    o.term.lines = []
+    command(o, 'HELP')
+    assert any('NEOFETCH' in line for line in o.term.lines)
+    assert not any('-WAKE' in line for line in o.term.lines)
+
+
 if __name__ == '__main__':
     test_shell_files()
     test_basic()
     test_stars()
+    test_neofetch()
     print('terminal regression checks passed')

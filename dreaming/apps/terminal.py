@@ -125,6 +125,26 @@ class Terminal:
             self.basic.pc = 0
             self.basic.statement(source)
 
+    def neofetch(self, wake, events):
+        minutes = self.os.t // 60
+        memory = 32 + (self.os.t // 4 + len(self.os.z) * 7) % 96
+        info = ['DREAMER/DREAMING', '-----', 'OS: DREAMOS 1.0',
+                'KERNEL: TILES 32X24', f'UPTIME: {minutes} MIN', 'SHELL: DREAMSH',
+                'RES: 256X192', 'CPU: 1 NEURAL CORE', 'GPU: IMAGINARY',
+                f'MEM: {memory} / 256 MB', f'APPS: {len(self.os.z)}']
+        if wake:
+            info = ['DREAMER/DREAMING', '-----', 'HOST: INSIDE THE MODEL',
+                    'SHELL: DREAMSH', 'RES: 256X192', 'CPU: 1 NEURAL CORE',
+                    'GPU: IMAGINARY', f'MEM: {memory} / 256 MB',
+                    'YOU TRIED TO WAKE UP.', 'BUT THIS COMPUTER IS A DREAM.',
+                    'NOTHING HERE IS REAL. KEEP PLAYING.']
+            events.append('neofetch_egg')
+        for i, text in enumerate(info):
+            if i < 3: self.lines.append((i, text))
+            else: self.write(text)
+        self.lines = self.lines[-40:]
+        events.append('neofetch')
+
     def command(self, source, events):
         from ..os_sim import PATHS
         cmd, _, rest = source.partition(' ')
@@ -132,7 +152,10 @@ class Terminal:
         def usage(n, hint):
             if len(args) != n: raise ValueError('USAGE: ' + cmd + ' ' + hint)
         if cmd == 'HELP':
-            self.write('LS CD PWD TREE FIND CAT HEAD TAIL\nWC GREP ECHO TOUCH CP MV RM\nMKDIR RMDIR DATE WHOAMI CLEAR\nBASIC RUN BTOP EXIT')
+            self.write('LS CD PWD TREE FIND CAT HEAD TAIL\nWC GREP ECHO TOUCH CP MV RM\nMKDIR RMDIR DATE WHOAMI CLEAR\nBASIC RUN BTOP NEOFETCH EXIT')
+        elif cmd == 'NEOFETCH':
+            if args not in ([], ['-WAKE']): raise ValueError('USAGE: NEOFETCH')
+            self.neofetch(args == ['-WAKE'], events)
         elif cmd == 'PWD': self.write(self.cwd)
         elif cmd == 'WHOAMI': self.write('DREAMER')
         elif cmd == 'DATE': self.write(f'SUN NOV 08 2026 12:{self.os.t // 60 % 60:02}')
@@ -273,4 +296,9 @@ class Terminal:
         prompt = ('BASIC>' if self.mode == 1 else self.cwd + '>') + self.input + '_'
         tail = [prompt[i:i + 36] for i in range(0, len(prompt), 36)]
         lines = self.lines[-(12 - len(tail)):] + tail
-        for i, line in enumerate(lines[-12:]): put_text(g, wr + 1 + i, wc + 1, line, 'term')
+        for i, line in enumerate(lines[-12:]):
+            if isinstance(line, tuple):
+                logo_row, text = line
+                for c in range(7): g[wr + 1 + i, wc + 1 + c] = ATLAS[('neo_logo', logo_row, c)]
+                put_text(g, wr + 1 + i, wc + 8, text, 'term')
+            else: put_text(g, wr + 1 + i, wc + 1, line, 'term')

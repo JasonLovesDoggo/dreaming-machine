@@ -831,7 +831,7 @@ class Driver:
             name = 'TMP' + str(r.randrange(100))
             commands = ['LS', 'LS ' + r.choice(list(self.os.fs)), 'CD ' + r.choice(list(self.os.fs)),
                         'CD MISSING', 'CAT ' + full, 'HEAD -3 ' + full, 'TAIL ' + full, 'WC ' + full,
-                        'GREP THE ' + full, 'FIND TXT', 'TREE', 'PWD', 'DATE', 'WHOAMI',
+                        'GREP THE ' + full, 'FIND TXT', 'TREE', 'PWD', 'DATE', 'WHOAMI', 'NEOFETCH', 'NEOFETCH',
                         'TOUCH ' + name + '.TXT', 'MKDIR C:/' + name, 'RMDIR C:/' + name,
                         'CP ' + full + ' C:/' + name + '.TXT', 'MV ' + full + ' ' + name + '.TXT',
                         'RM ' + full, 'ECHO HELLO DREAM > ' + name + '.TXT', 'CLEAR', 'LSX', 'SL', '']
@@ -887,7 +887,8 @@ class Driver:
                 yield from self.press_key(KEY_UP)
                 yield from self.press_key(KEY_ENTER)
             else:
-                yield from command(r.choice(commands), shell=True)
+                text = 'NEOFETCH -WAKE' if r.random() < 0.02 else r.choice(commands)
+                yield from command(text, shell=True)
             if 'explorer' in self.os.z and r.random() < 0.15:
                 yield from self.ensure_focus('explorer')
                 yield from self.type_text('LS')
