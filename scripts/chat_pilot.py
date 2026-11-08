@@ -34,7 +34,8 @@ class PilotDriver(Driver):
         self.used = Counter()
 
     def unknown(self):
-        seed, target = self.os.seed, min(range(len(FALLBACKS)), key=lambda i: (self.used[i], (i - seed) % len(FALLBACKS)))
+        seed = self.os.seed
+        target = min(range(len(FALLBACKS)), key=lambda i: (self.used[i], (i - seed) % len(FALLBACKS)))
         for _ in range(400):
             p = self.rng.choice(FRAMES).format(self.rng.choice(WORDS), self.rng.choice(WORDS))
             if reply(p, seed) == FALLBACKS[target]:
