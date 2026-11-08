@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight — simulator only</title>
+  <style>
+    body { background: #101820; color: #e3edf4; font: 16px monospace; text-align: center; margin: 2rem auto; padding: 0 1rem; max-width: 900px; }
+    img { display: block; width: 100%; max-width: 672px; margin: 1rem auto; image-rendering: pixelated; background: #000; aspect-ratio: 28 / 19; }
+    a { color: #8dd8ff; } button { font: inherit; padding: .5rem 1rem; }
+  </style>
+  <script src="/static/flight.js" defer></script>
+</head>
+<body>
+  <h1>Flight</h1>
+  <p>simulator only - not part of the dreaming model</p>
+  <img id="frame" alt="Flight simulator cockpit">
+  <p id="status" role="status">Starting…</p>
+  <p>Arrow keys: pitch / bank · W/S: throttle · A/D: rudder · Enter: reset</p>
+  <p>Hold one key at a time. Click this page to use the keyboard.</p>
+  <button id="reset">Reset flight</button>
+  <p><a href="/">Back to Dreaming Computer</a></p>
+</body>
+</html>

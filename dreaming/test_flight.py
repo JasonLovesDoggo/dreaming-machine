@@ -1,11 +1,9 @@
 import numpy as np
-import torch
+import pytest
 from .apps import flight as fl
 from .apps.flight.render import render_scene, match_tile, ART
-from .os_sim import MicroOS, obs_to_pixels, STATE_VOCAB, KEY_PLUS, DESK_ICONS
+from .os_sim import MicroOS, APPS, APP_SLOTS, STATE_VOCAB, DESK_ICONS
 from .tiles import VOCAB, ATLAS, grid_to_pixels
-from .model import WorldModel, Config, compute_loss, decode
-from .dataset import OBS_KEYS
 from .flight_art import SKY, SEA, GRASS, FRAME_COLORS, FILLS, PAIRS
 
 
@@ -47,33 +45,11 @@ def test_gentle_runway_landing_and_water_crash():
     assert f.step('DOWN') == ['flight_crash']
 
 
-def test_flight_tiles_and_existing_model():
-    s = MicroOS(3)
-    empty = s.observe([])
-    s.open_app('flight')
-    obs = s.observe([])
-    assert set(obs) == set(empty) == set(OBS_KEYS) | {'events'}
-    tiles = fl.render_tiles(s.flight)
+def test_flight_tiles():
+    tiles = fl.render_tiles(fl.Flight(3))
     assert tiles.shape == (19, 28)
     assert np.all(tiles < VOCAB)
-    assert obs_to_pixels(obs).shape == (192, 256)
-    assert np.all(obs['state'] < STATE_VOCAB)
-    s.step((0, 0, 0, KEY_PLUS))
-    c, r = s.pos['flight']
-    assert np.array_equal(obs['grid'][r+1:r+20, c+1:c+29], tiles)
-    torch.set_num_threads(1)
-    model = WorldModel(Config(d=32, layers=1, heads=4, mem=2))
-    assert not any(k.startswith('f_') for k in model.state_dict())
-    for sample in [empty, obs]:
-        x = {k: torch.tensor(sample[k].astype(np.int64))[None] for k in OBS_KEYS}
-        x['grid'] = x['grid'].flatten(1)
-        x.update(action=torch.zeros(1, 4, dtype=torch.long), prev_btn=torch.zeros(1, dtype=torch.long))
-        out, _ = model(x, model.init_memory(1))
-        loss, _ = compute_loss(out, x, x['grid'])
-        assert torch.isfinite(loss)
-        assert decode(out)['grid'].shape == (1, 768)
-    s.open_app('paint')
-    assert not np.array_equal(s.observe([])['grid'][r+1:r+20, c+1:c+29], tiles)
+    assert grid_to_pixels(tiles).shape == (152, 224)
 
 
 def test_edges_cockpit_clouds_and_instruments():
@@ -110,18 +86,18 @@ def test_compact_atlas_and_shared_gauge_parts():
                 for level in range(16) for r in range(2) for c in range(2)}) < 70
 
 
-def test_flight_and_existing_app_state_slots():
-    assert [item[2][0] for item in DESK_ICONS[-4:]] == ['calculator', 'terminal', 'dreamer', 'flight']
+def test_retired_flight_state_slots():
+    assert len(APPS) == 8 and 'flight' not in APPS
+    assert all(target[0] != 'flight' for _, _, target in DESK_ICONS)
+    assert APP_SLOTS.index('flight') == 8
     s = MicroOS(3)
-    s.open_app('calculator')
-    s.open_app('terminal')
-    s.open_app('dreamer')
-    before = s.ext_state_fields()
-    s.open_app('flight')
-    s.flight.alt, s.flight.speed, s.flight.throttle = 120, 3, .5
-    after = s.ext_state_fields()
-    assert after[:12] == before[:12]
-    assert after[12:16] == [10, 15, 15, 0]
+    for app in APPS:
+        s.open_app(app)
+    with pytest.raises(ValueError, match='Unknown app: flight'):
+        s.open_app('flight')
+    assert len(s.state_vector()) == len(STATE_VOCAB) == 78
+    assert list(s.state_vector()[24:27]) == [0, 0, 0]
+    assert s.ext_state_fields()[12:16] == [0, 0, 0, 0]
 
 
 def test_banked_horizon_attitude_and_cracked_windscreen(monkeypatch):
@@ -153,36 +129,26 @@ def test_badly_matched_edges_are_not_flattened():
 
 def test_flight_palette_pixel_transport():
     from .tiles import PAL
-    from .web.play import encode
     from .web.images import png
     from io import BytesIO
     from PIL import Image
-    s = MicroOS(0)
-    s.open_app('flight')
-    ob = s.observe([])
-    pixels = obs_to_pixels(ob)
+    pixels = grid_to_pixels(fl.render_tiles(fl.Flight(0)))
     assert PAL.shape == (16, 3)
     assert pixels.max() < len(PAL)
-    encoded = encode([ob], False)
-    assert encoded[2:] == pixels.astype(np.uint8).tobytes()
-    assert encode([], False) == bytes([0, 0])
     image = np.asarray(Image.open(BytesIO(png(pixels).body)))
     assert np.array_equal(image, PAL[pixels])
 
 
-def test_driver_opens_flight_with_its_icon_covered():
+def test_mixed_driver_never_opens_flight():
     from .driver import Driver
-    for seed in (0, 7):
-        s = MicroOS(seed)
-        s.open_app('doom')
-        d = Driver(s, seed)
-        events = []
-        for action in d.task_flight():
-            obs = s.step(action)
-            d.observe_events(obs['events'])
-            events.extend(obs['events'])
-        assert 'open_flight' in events
-        assert 'flight_fly' in events
+    s = MicroOS(7)
+    d = Driver(s, 7, 'mixed')
+    for _ in range(10000):
+        obs = s.step(next(d.stream))
+        d.observe_events(obs['events'])
+        assert 'open_flight' not in obs['events']
+        assert 'flight' not in s.z
+        assert s.ext_state_fields()[12:16] == [0, 0, 0, 0]
 
 
 def test_simple_world_tile_budget_and_horizon_pairs():
@@ -194,25 +160,35 @@ def test_simple_world_tile_budget_and_horizon_pairs():
     assert m[0] == 0 and h[0] == 0 and m[1] in (4, 5)
 
 
-def test_autopilot_takes_off_lands_and_crashes():
-    from collections import Counter
-    from .driver import Driver
-    events = Counter()
-    for seed in (1, 4, 6):
-        s = MicroOS(seed)
-        d = Driver(s, seed, 'flight')
-        for _ in range(2500):
-            obs = s.step(next(d.stream))
-            d.observe_events(obs['events'])
-            events.update(obs['events'])
-    assert events['flight_takeoff'] and events['flight_land'] and events['flight_crash']
-
-
-def test_mixed_mode_caps_flight_share():
-    from .driver import FLIGHT_SHARE, Driver
-    d = Driver(MicroOS(0), 0, 'mixed')
-    d.counts['step'] = 10_000
-    d.counts['flight_frames'] = int(FLIGHT_SHARE * 10_000) + 1
-    assert 'flight' not in {d.choose_task() for _ in range(2000)}
-    d.counts['flight_frames'] = 0
-    assert 'flight' in {d.choose_task() for _ in range(2000)}
+def test_standalone_endpoints():
+    from fastapi.testclient import TestClient
+    from .web.app import create_app
+    from .web import flight
+    from io import BytesIO
+    from PIL import Image
+    import base64
+    with TestClient(create_app()) as client:
+        page = client.get('/flight')
+        assert page.status_code == 200 and 'text/html' in page.headers['content-type']
+        assert 'simulator only - not part of the dreaming model' in page.text
+        config = client.get('/config')
+        assert config.status_code == 200
+        assert set(config.json()) == {'pal', 'charset', 'extra_keys', 'key_extra0', 'sections', 'ckpts', 'current'}
+        assert client.get('/sprites/flight').headers['content-type'] == 'image/png'
+        a = client.post('/flight/api/step', json={'seed': 7}).json()
+        b = client.post('/flight/api/step', json={'seed': 7}).json()
+        for key in ['W'] * 5 + ['UP', 'RIGHT', '', 'ENTER']:
+            a = client.post('/flight/api/step', json={'session': a['session'], 'key': key}).json()
+            b = client.post('/flight/api/step', json={'session': b['session'], 'key': key}).json()
+            assert {k: v for k, v in a.items() if k != 'session'} == {k: v for k, v in b.items() if k != 'session'}
+        image = Image.open(BytesIO(base64.b64decode(a['frame'].split(',')[1])))
+        assert image.size == (224, 152)
+        assert client.post('/flight/api/step', json={'session': a['session'], 'reset': True}).json()['events'] == ['flight_reset']
+        assert client.post('/flight/api/step', json={}).status_code == 200
+        assert client.post('/flight/api/step', json={'session': 'missing'}).status_code == 404
+        assert client.post('/flight/api/step', json={'key': 'invalid'}).status_code == 422
+        assert client.post('/flight/api/step', json={'seed': -1}).status_code == 422
+        for _ in range(flight.MAX_SESSIONS + 1):
+            assert client.post('/flight/api/step', json={}).status_code == 200
+        assert len(flight.sessions) == flight.MAX_SESSIONS
+        assert client.post('/flight/api/step', json={'session': a['session']}).status_code == 404

@@ -5,7 +5,6 @@ import numpy as np
 from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, grid_to_pixels, draw_cursor, RANKS,
                     NCH, CHARSET)
 from . import doom as dm
-from .apps import flight as fl
 from . import pictures as pics
 from .apps import calculator as calc_app
 from .apps.terminal import Terminal
@@ -15,8 +14,8 @@ APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom':
              'calculator': (calc_app.W, calc_app.H)}
 APP_SIZES['terminal'] = (20, 14)
 APP_SIZES['dreamer'] = (24, 18)
-APP_SIZES['flight'] = (30, 22)
 APPS = list(APP_SIZES)
+# Flight's slot is retired/reserved.
 # Fixed OS-state slots: existing apps keep their slot forever; new apps take a reserved one (never reorder).
 APP_SLOTS = ['explorer', 'paint', 'cards', 'doom', 'notepad', 'calculator', 'terminal', 'dreamer', 'flight', 'spare']
 assert all(a in APP_SLOTS for a in APPS)
@@ -28,8 +27,6 @@ APP_TITLES['terminal'] = 'TERMINAL'
 DEFAULT_POS['terminal'] = (12, 5)
 APP_TITLES['dreamer'] = 'CHAT'
 DEFAULT_POS['dreamer'] = (7, 3)
-APP_TITLES['flight'] = 'FLIGHT SIM'
-DEFAULT_POS['flight'] = (1, 1)
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
 KEY_CHAR0 = 9  # typed characters: KEY_CHAR0 + index into CHARSET (space = 9)
 KEY_EXTRA0 = KEY_CHAR0 + NCH  # typed symbols with no font glyph (append only): KEY_EXTRA0 + index into EXTRA_KEYS
@@ -44,7 +41,6 @@ DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('expl
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
 DESK_ICONS.append(('terminal', 'TERM', ('terminal', None)))
 DESK_ICONS.append(('dreamer', 'CHAT', ('dreamer', None)))
-DESK_ICONS.append(('flight', 'FLIGHT', ('flight', None)))
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
 TASKBAR_BTN_W = 5
@@ -125,7 +121,6 @@ class MicroOS:
         self.doom = dm.Doom()
         self.calc = calc_app.Calc()
         self.chat = dreamer.Chat()
-        self.flight = fl.Flight(self.seed)
         self._reset_app('explorer'); self._reset_app('paint'); self._reset_app('cards'); self._reset_app('notepad')
         return self.observe([])
 
@@ -166,14 +161,14 @@ class MicroOS:
             self.calc = calc_app.Calc()
         elif app == 'dreamer':
             self.chat = dreamer.Chat()
-        elif app == 'flight':
-            self.flight.reset()
 
     @property
     def focus(self):
         return self.z[-1] if self.z else None
 
     def open_app(self, app, arg=None, events=None):
+        if app not in APPS:
+            raise ValueError(f'Unknown app: {app}')
         events = events if events is not None else []
         if app in self.z:
             self.raise_app(app)
@@ -251,11 +246,6 @@ class MicroOS:
             events += self.doom.step(dkey, fire)
         if 'calculator' in self.z:
             self.calc.tick()
-        if self.focus == 'flight':
-            fk = {1: 'UP', 2: 'DOWN', 3: 'LEFT', 4: 'RIGHT', 6: 'ENTER'}.get(key, '')
-            if KEY_CHAR0 <= key < KEY_CHAR0 + NCH:
-                fk = CHARSET[key - KEY_CHAR0]
-            events += self.flight.step(fk)
         if 'paint' in self.z and self.pt_load < 10:
             self.pt_load += 1
             if self.pt_load == 10:
@@ -709,9 +699,6 @@ class MicroOS:
         return ok
 
     # ------------------------------------------------------------------ doom
-    def _press_flight(self, mx, my, lc, lr, dbl, events):
-        pass
-
     def _doom_view_origin(self):
         wc, wr = self.pos['doom']
         return wc + 1, wr + 1
@@ -859,12 +846,6 @@ class MicroOS:
                 put_text(g, wr + 1 + i, wc + 1, line.ljust(44), ctx)
             put_text(g, wr + 15, wc + 1, ('TYPING...' if self.chat.pending else 'ENTER SEND  UP/DOWN HISTORY').ljust(44), 'tool')
             put_text(g, wr + 16, wc + 1, ('> ' + self.chat.input[-41:] + '_').ljust(44), 'body')
-        elif app == 'flight':
-            wc, wr, w, h = self._frame(g, app, 'FLIGHT SIM', 'hud')
-            g[wr + 1:wr + 20, wc + 1:wc + 29] = fl.render_tiles(self.flight)
-            f = self.flight
-            status = 'CRASH - ENTER RESET' if f.crash else f'ALT {int(f.alt):03} SPD {int(f.speed * 30):03} HDG {int(f.heading * 180 / np.pi):03}'
-            put_text(g, wr + 20, wc + 1, status.ljust(56), 'flight')
         elif app == 'notepad':
             wc, wr, w, h = self._frame(g, app, 'NOTEPAD' + (' - ' + self.np_file if self.np_file else ''), 'body')
             self._toolbar(g, wc, wr, w, [(1, 'NEW'), (4, 'SAVE')])
@@ -903,10 +884,6 @@ class MicroOS:
         if 'dreamer' in self.z:
             ext[8:12] = [int(bool(self.chat.pending)), min(31, self.chat.progress // 4),
                           min(31, self.chat.scroll), len(self.chat.messages)]
-        # Flight owns extension fields 12..15.
-        if 'flight' in self.z:
-            f = self.flight
-            ext[12:16] = [min(31, int(f.alt / 12)), min(31, int(f.speed * 5)), int(f.throttle * 31), int(f.crash > 0)]
         return ext
 
     def state_vector(self):
