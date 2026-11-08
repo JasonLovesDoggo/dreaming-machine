@@ -3,6 +3,7 @@ import argparse
 import glob
 import json
 import os
+import time
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 from .dataset import OBS_KEYS, generate
 from .model import Config, WorldModel, decode
 from .tiles import ATLAS, VOCAB
+from .metrics import append_metrics
 from .train import Windows, load_training_shards, shard_mode, step_inputs, step_targets, to_torch
 
 MODES = ['mixed', 'doom', 'cards', 'windows', 'calculator', 'terminal', 'dreamer']
@@ -96,6 +98,7 @@ def main():
     ap.add_argument('--checkpoint', required=True)
     ap.add_argument('--data', required=True)
     ap.add_argument('--out', required=True)
+    ap.add_argument('--metrics-dir', default='')
     ap.add_argument('--exclude-data', default='')
     ap.add_argument('--cats-data', default='')
     ap.add_argument('--holdout-episodes', type=int, default=0)
@@ -121,6 +124,9 @@ def main():
             model, data, device, a.windows, a.batch, a.starts, tuple(a.horizons)))
     with open(a.out, 'w') as f:
         json.dump(results, f, indent=2)
+    append_metrics(a.metrics_dir or os.path.dirname(os.path.abspath(a.checkpoint)),
+                   dict(kind='eval', it=int(ck.get('iter', 0)), time=time.time(),
+                        checkpoint=os.path.basename(a.checkpoint), metrics=results))
     print(json.dumps(results, indent=2))
 
 

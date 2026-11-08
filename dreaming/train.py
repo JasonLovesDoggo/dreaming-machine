@@ -15,6 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from .dataset import OBS_KEYS
 from .model import WorldModel, Config, compute_loss, decode
 from .tiles import VOCAB, PAL, ATLAS
+from .metrics import append_metrics
 
 
 class Windows:
@@ -331,9 +332,13 @@ def main():
         opt.step()
         if master and (it + 1) % a.log_every == 0:
             sps = a.log_every * a.batch * a.unroll * world / (time.time() - t_log)
-            parts = ' '.join(f'{k} {float(v) / a.log_every:.4f}' for k, v in agg.items())
-            print(f'it {it + 1} loss {float(total):.4f} lr {lr:.2e} gn {float(gn):.2f} ss {p_ss:.2f} '
+            values = {k: float(v) / a.log_every for k, v in agg.items()}
+            loss, grad_norm = float(total.detach()), float(gn)
+            parts = ' '.join(f'{k} {v:.4f}' for k, v in values.items())
+            print(f'it {it + 1} loss {loss:.4f} lr {lr:.2e} gn {grad_norm:.2f} ss {p_ss:.2f} '
                   f'| {parts} | {sps:.0f} samples/s', flush=True)
+            append_metrics(a.out, dict(kind='train', it=it + 1, time=time.time(), loss=loss,
+                                       **values, lr=lr, grad_norm=grad_norm, ss_prob=p_ss, samples_per_sec=sps))
             agg, t_log = {}, time.time()
         if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == end_it):
             save_checkpoint(a, model, opt, cfg, it + 1, b, amp)
