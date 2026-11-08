@@ -118,6 +118,33 @@ class DriverTest(unittest.TestCase):
         for key in first:
             np.testing.assert_array_equal(first[key], second[key], err_msg=key)
 
+    def test_picture_open_stats_do_not_change_episode(self):
+        from unittest.mock import patch
+
+        from .pictures import parse_name
+
+        stats = {k: Counter() for k in ('picture_opens', 'subjects', 'focus')}
+        first = run_episode(17, 2000)
+        observed = Counter()
+        original = MicroOS._ex_open
+
+        def track(os_, events):
+            original(os_, events)
+            if 'ex_open_png' in events:
+                observed[os_.pt_file] += 1
+
+        with patch.object(MicroOS, '_ex_open', track):
+            second = run_episode(17, 2000, stats=stats)
+        for key in first:
+            np.testing.assert_array_equal(first[key], second[key], err_msg=key)
+        self.assertTrue(observed)
+        self.assertEqual(stats['picture_opens'], observed)
+        expected = Counter()
+        for name, count in observed.items():
+            expected.update({subject: count for subject in set(parse_name(name)) or {'abstract'}})
+        self.assertEqual(stats['subjects'], expected)
+        self.assertEqual(sum(stats['focus'].values()), 2000)
+
 
 if __name__ == '__main__':
     unittest.main()
