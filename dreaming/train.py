@@ -189,6 +189,7 @@ def load_data(a, rank, world):
         if not 0 <= a.extra_frac <= 1 or not 1 <= a.extra_shards <= 40:
             raise ValueError('extra fraction must be in [0,1] and shard cap in [1,40]')
         extra = sorted(glob.glob(os.path.join(a.extra_data, '*.npz')))[:-1][:a.extra_shards]
+        extra = extra[rank::world] if len(extra) >= world else extra
         win = MixedWindows(win, windows(extra, 5678 + rank), a.extra_frac)
     return win
 

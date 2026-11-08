@@ -99,6 +99,30 @@ def test_mode_mix_only_applies_to_primary(tmp_path):
     assert win.batch(4)['grid'].shape[0] == 4
 
 
+@pytest.mark.parametrize('world,extra_count,cap', [(3, 6, 4), (4, 3, 2), (2, 3, 2)])
+def test_extra_shards_partitioned_per_rank(tmp_path, world, extra_count, cap):
+    primary, extra = tmp_path / 'primary', tmp_path / 'extra'
+    primary.mkdir()
+    extra.mkdir()
+    d = dataset()
+    d.pop('mode')
+    for i in range(world):
+        np.savez(primary / f'shard_mixed_001_{i:05d}.npz', **d)
+    for i in range(extra_count):
+        d['cursor'][:] = i
+        np.savez(extra / f'shard_cats_001_{i:05d}.npz', **d)
+    args = SimpleNamespace(data=str(primary), max_steps_data=0, holdout_episodes=0,
+                           sampler_v2=True, mode_mix={'mixed': 1}, unroll=2,
+                           extra_data=str(extra), extra_frac=0.25, extra_shards=cap)
+    eligible = list(range(min(extra_count - 1, cap)))
+    for rank in range(world):
+        win = load_data(args, rank, world)
+        expected = eligible[rank::world] if len(eligible) >= world else eligible
+        assert set(win.extra.d['cursor'][:, 0]) == set(expected)
+        assert len(win.extra.d['action']) == 40 * len(expected)
+        assert len(win.primary.d['action']) == 40
+
+
 def test_reserved_heldout_seeds():
     heldout = {((HELDOUT_SEED_BASE + i) * 10_000_000 + e) for i in range(7) for e in range(2)}
     training = {base * 10_000_000 + shard * 1000 + e
