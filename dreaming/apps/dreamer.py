@@ -6,7 +6,6 @@ import json
 import logging
 import os
 from pathlib import Path
-import re
 import textwrap
 import zlib
 
@@ -14,16 +13,39 @@ from ..tiles import CHARSET
 from .dreamer_persona import MODEL, SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
-NUMBER_24 = r'(?<![0-9])(?:24|TWENTY[\s_-]*FOUR)(?![0-9])'
-MULTIPLY = r'(?:[\*\u00d7\u00b7]|(?<![A-Z])(?:X|TIMES|MULTIPLIED\s+BY)(?![A-Z]))'
-HELD_OUT = re.compile(
-    rf'{NUMBER_24}\s*{MULTIPLY}|{MULTIPLY}\s*{NUMBER_24}|'
-    rf'\b(?:MULTIPLY|PRODUCT|DOUBLE|TWICE)\b[^.!?\n]{{0,80}}{NUMBER_24}|'
-    rf'{NUMBER_24}\s+(?:DOUBLED|BY\s+\d+)\b', re.IGNORECASE)
-
-
-def held_out_multiplication(text):
-    return bool(HELD_OUT.search(text))
+FALLBACK_THRESHOLD = 0.7
+FALLBACKS = (
+    'I AM NOT SURE. I AM JUST A DREAMER IN SAN FRANCISCO.',
+    'I AM NOT SURE ABOUT THAT ONE.',
+    'HMM. I DO NOT KNOW THAT ONE.',
+    'I AM NOT SURE. COULD YOU SAY IT ANOTHER WAY.',
+    'THAT ONE IS OUTSIDE MY DREAMS. I AM NOT SURE.',
+    'I DO NOT KNOW. I WOULD RATHER NOT GUESS.',
+    'I AM NOT SURE. I DO NOT WANT TO MAKE SOMETHING UP.',
+    'I CANNOT ANSWER THAT ONE WELL. I AM NOT SURE.',
+    'NOT SURE. MY DREAMS DO NOT COVER THAT.',
+    'I AM NOT SURE. TRY ASKING ME SOMETHING ELSE.',
+    'HMM. THAT IS A MYSTERY TO ME.',
+    'I DO NOT KNOW THAT. I AM ONLY THE DREAMER.',
+    'I AM NOT SURE. MAYBE ASK ME A DIFFERENT WAY.',
+    'I DO NOT HAVE A GOOD ANSWER FOR THAT.',
+    'I AM NOT SURE. I WOULD ONLY BE GUESSING.',
+    'THAT ONE STUMPS ME. I AM NOT SURE.',
+    'I DO NOT KNOW. SORRY.',
+    'I AM NOT SURE. CAN YOU TELL ME MORE.',
+    'I DO NOT UNDERSTAND YET. CAN YOU REPHRASE IT.',
+    'I AM NOT SURE WHAT YOU MEAN.',
+    'I AM JUST A DREAMER. I DO NOT KNOW THAT ONE.',
+    'I AM NOT SURE. I LIVE IN SAN FRANCISCO NOT IN AN ENCYCLOPEDIA.',
+    'I AM NOT SURE. I CANNOT CHECK THAT FROM HERE.',
+    'I DO NOT KNOW THAT ONE. I WILL NOT PRETEND I DO.',
+    'I AM NOT SURE. THAT IS BEYOND WHAT I KNOW.',
+    'HMM. I AM NOT SURE. WHAT ELSE IS ON YOUR MIND.',
+    'I AM NOT SURE. I AM A DREAMER NOT AN ORACLE.',
+    'I DO NOT KNOW. LET US TRY A DIFFERENT QUESTION.',
+    'I AM NOT SURE. THAT ONE SLIPS PAST ME.',
+    'I DO NOT KNOW THAT. I WOULD HATE TO GUESS WRONG.',
+)
 
 
 def normalize(text):
@@ -37,8 +59,7 @@ def grams(text):
 
 class Corpus:
     def __init__(self, pairs):
-        self.pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)
-                      and not held_out_multiplication(p) and not held_out_multiplication(a)}
+        self.pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)}
         if not self.pairs:
             raise ValueError('Dreamer corpus has no usable answers')
         self.prompts = tuple(sorted(self.pairs))
@@ -58,7 +79,7 @@ class Corpus:
         for key in keys[:12]:
             candidates.update(self.index[key])
         if not candidates:
-            return self.prompts
+            return 0.0, self.prompts
         words = set(prompt.split())
         best, winners = -1, []
         for i in sorted(candidates):
@@ -71,19 +92,19 @@ class Corpus:
                 best, winners = score, [self.prompts[i]]
             elif score == best:
                 winners.append(self.prompts[i])
-        return tuple(winners)
+        return best, tuple(winners)
 
     def reply(self, prompt, seed=0):
-        if held_out_multiplication(prompt):
-            return ''
         prompt = normalize(prompt)
         if not prompt:
             return ''
         if prompt in self.pairs:
             return self.pairs[prompt]
-        choices = self.closest(prompt)
-        pick = zlib.crc32(f'{seed}:{prompt}'.encode()) % len(choices)
-        return self.pairs[choices[pick]]
+        score, choices = self.closest(prompt)
+        pick = zlib.crc32(f'{seed}:{prompt}'.encode())
+        if score < FALLBACK_THRESHOLD:
+            return FALLBACKS[pick % len(FALLBACKS)]
+        return self.pairs[choices[pick % len(choices)]]
 
 
 def load_corpus(path=None):
@@ -112,7 +133,7 @@ def live_cache(path):
                 if not isinstance(pair['prompt'], str) or not isinstance(pair['answer'], str):
                     raise ValueError('Invalid cache pair')
                 prompt, answer = normalize(pair['prompt']), normalize(pair['answer'])
-                if prompt and answer and not held_out_multiplication(pair['prompt']) and not held_out_multiplication(pair['answer']):
+                if prompt and answer:
                     pairs[prompt] = answer
             except (ValueError, KeyError, TypeError):
                 log.warning('Ignoring malformed Dreamer live-cache line')
@@ -127,8 +148,6 @@ def live_reply(prompt):
     from openai import OpenAI
     response = OpenAI(timeout=30, max_retries=2).responses.create(
         model=MODEL, instructions=SYSTEM_PROMPT, input=prompt, max_output_tokens=500)
-    if held_out_multiplication(response.output_text):
-        raise ValueError('Terra returned a held-out multiplication')
     answer = normalize(response.output_text)
     if not answer:
         raise ValueError('Terra returned an empty live reply')
@@ -140,8 +159,6 @@ def live_reply(prompt):
 
 
 def reply(prompt, seed, ticks=0):
-    if held_out_multiplication(prompt):
-        return ''
     prompt = normalize(prompt)
     if not prompt:
         return ''
@@ -162,7 +179,7 @@ class Chat:
         self.scroll = 0
 
     def send(self, seed, ticks):
-        if self.pending or not self.input.strip() or held_out_multiplication(self.input):
+        if self.pending or not self.input.strip():
             return False
         self.messages.extend([('body', self.input), ('dreamer', '')])
         self.messages = self.messages[-24:]
