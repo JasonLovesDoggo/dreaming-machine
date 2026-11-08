@@ -23,9 +23,10 @@ def gen_shards(seed: int, steps: int):
 
 
 @app.local_entrypoint()
-def gen_data(total_steps: int = 20_000_000, containers: int = 20):
+def gen_data(total_steps: int = 20_000_000, containers: int = 20, seed_offset: int = 1000):
     per = total_steps // containers
-    for s in gen_shards.map(range(containers), [per] * containers):
+    seeds = range(seed_offset, seed_offset + containers)
+    for s in gen_shards.map(seeds, [per] * containers):
         print('done seed', s)
 
 
