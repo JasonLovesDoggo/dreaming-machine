@@ -622,23 +622,29 @@ class Driver:
         if r.random() < 0.3:
             yield from self.close('notepad')
 
+    def chat_prompt(self):
+        return self.mess_prompt(self.rng.choice(prompts())[:150])
+
+    def mess_prompt(self, prompt):
+        messy = self.rng.random()
+        if messy < 0.1:
+            prompt = ''.join(self.rng.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ') for _ in range(self.rng.randint(1, 30)))
+        elif messy < 0.25 and len(prompt) > 3:
+            i = self.rng.randrange(len(prompt) - 1)
+            prompt = prompt[:i] + prompt[i + 1] + prompt[i] + prompt[i + 2:]
+        elif messy < 0.35:
+            prompt = prompt[:self.rng.randint(1, len(prompt))]
+        elif messy < 0.45:
+            prompt = prompt + '!!!'
+        return prompt
+
     def task_dreamer(self):
         yield from self.open_app('dreamer')
         if self.os.focus != 'dreamer':
             return
         for _ in range(self.rng.randint(2, 6)):
             yield from self.press_key(KEY_ENTER)
-            prompt = self.rng.choice(prompts())[:150]
-            messy = self.rng.random()
-            if messy < 0.1:
-                prompt = ''.join(self.rng.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ') for _ in range(self.rng.randint(1, 30)))
-            elif messy < 0.25 and len(prompt) > 3:
-                i = self.rng.randrange(len(prompt) - 1)
-                prompt = prompt[:i] + prompt[i + 1] + prompt[i] + prompt[i + 2:]
-            elif messy < 0.35:
-                prompt = prompt[:self.rng.randint(1, len(prompt))]
-            elif messy < 0.45:
-                prompt = prompt + '!!!'
+            prompt = self.chat_prompt()
             yield from self.type_text(prompt)
             if self.rng.random() < 0.3:
                 yield from self.type_text('X')
