@@ -12,9 +12,14 @@ class Neural:
     def __init__(self, path, device):
         import torch
         from ..model import WorldModel, Config
+        from ..os_sim import NKEYS
         ck = torch.load(path, map_location=device)
         self.model = WorldModel(Config(**ck['cfg'])).to(device).eval()
-        self.model.load_state_dict(ck['model'])
+        sd = dict(ck['model'])
+        akey = sd.get('akey.weight')
+        if akey is not None and akey.shape[0] < NKEYS:  # checkpoints from before new keys were appended
+            sd['akey.weight'] = torch.cat([akey, akey.new_zeros(NKEYS - akey.shape[0], akey.shape[1])])
+        self.model.load_state_dict(sd)
         self.device = device
 
     def sync(self, obs):
