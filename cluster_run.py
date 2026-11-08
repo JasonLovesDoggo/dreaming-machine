@@ -29,7 +29,7 @@ OUT_DIR = f'/out/runs/{RUN_ID}'
 
 
 @app.function(image=image, volumes={'/out': out.read_only(), '/vol': data},
-              cpu=1, memory=1024, timeout=300, max_containers=1)
+              cpu=1, memory=2048, timeout=1800, max_containers=1)
 def mirror_metrics(ckpts: list[str] | None = None):
     out.reload()
     merge_metrics(OUT_DIR, f'/vol/runs/{RUN_ID}/metrics.jsonl')
@@ -89,8 +89,11 @@ def train_cluster(cfg: dict):
 
 def _eval_ckpt(ckpt_name: str):
     import subprocess
-    if Path(ckpt_name).name != ckpt_name or not ckpt_name.endswith('.pt'):
-        raise ValueError('checkpoint must be a .pt basename')
+    if not re.fullmatch(r'ckpt_\d{6}\.pt', ckpt_name):
+        raise ValueError('checkpoint must be a numbered ckpt_NNNNNN.pt basename')
+    marker = Path(OUT_DIR) / 'run.json'
+    if not marker.exists() or int(ckpt_name[5:-3]) > json.loads(marker.read_text())['iter']:
+        raise ValueError(f'checkpoint is not complete: {ckpt_name}')
     subprocess.run(['python', '-m', 'dreaming.eval', '--checkpoint', f'{OUT_DIR}/{ckpt_name}',
                     '--data', '/vol/shards', '--holdout-episodes', '2',
                     '--cats-data', '/vol/shards_cats_dense_v1', '--out',
@@ -109,6 +112,11 @@ def eval_ckpt(ckpt_name: str):
               gpu=os.environ.get('DREAMING_EVAL_GPU', 'B300'), cpu=8, memory=65536, timeout=3600)
 def eval_ckpt_gpu(ckpt_name: str):
     _eval_ckpt(ckpt_name)
+
+
+def read_names():
+    volume = modal.Volume.from_name(VOLUME_NAME)
+    return {e.path.rsplit('/', 1)[-1] for e in volume.listdir(f'/runs/{RUN_ID}')}
 
 
 def read_state():
@@ -145,7 +153,13 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
     check_lock(cfg, lock)
     check_budget(records, budget_hours * 3600, total_cap_hours * 3600)
     cfg['deadline'] = time.time() + budget_hours * 3600
-    cfg['resume'] = 'auto' if resumed else source
+    if resumed:
+        latest = f"ckpt_{marker['iter']:06d}.pt"
+        if latest not in read_names():
+            raise ValueError(f'completed checkpoint {latest} missing; refusing partial ckpt.pt')
+        cfg['resume'] = f'{OUT_DIR}/{latest}'
+    else:
+        cfg['resume'] = source
     print(json.dumps(cfg, indent=2))
     print(shlex.join(torchrun_command(cfg, resume=cfg['resume'])))
     if not dry_run:
@@ -153,7 +167,7 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
 
 
 @app.local_entrypoint()
-def eval(ckpt_name: str = 'ckpt.pt', gpu: bool = False):
+def eval(ckpt_name: str, gpu: bool = False):
     (eval_ckpt_gpu if gpu else eval_ckpt).remote(ckpt_name)
 
 
