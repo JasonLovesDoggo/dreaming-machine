@@ -46,6 +46,17 @@ def _num(v):
     return (v, False) if math.isfinite(v) else (None, True)
 
 
+RESULT_KEYS = ('grid_ce', 'acc_all', 'acc_changed', 'copy_last_acc_all', 'rollouts')
+
+
+def _is_result(m):
+    return isinstance(m, dict) and any(k in m for k in RESULT_KEYS)
+
+
+def _short(v):
+    return f'{v:.4g}' if isinstance(v, float) else str(v)
+
+
 def _name(k, limit=40):
     return isinstance(k, str) and 0 < len(k) <= limit
 
@@ -113,13 +124,39 @@ class _Parsed:
             del self.train[:len(self.train) - MAX_TRAIN_ROWS]
             self.truncated = True
 
+    def _eval_note(self, it, key, value):
+        """Protocol/provenance metadata next to the per-app results, e.g. eval_protocol, idle, eval_decode_commit."""
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = str(value)
+        elif isinstance(value, dict):
+            parts = []
+            for k, v in value.items():
+                if isinstance(v, dict):
+                    v = ' '.join(f'{a}={_short(b)}' for a, b in v.items() if isinstance(b, (str, int, float)))
+                elif isinstance(v, list):
+                    v = ','.join(_short(b) for b in v[:8] if isinstance(b, (str, int, float)))
+                elif not isinstance(v, (str, int, float)):
+                    continue
+                parts.append(f'{k}: {_short(v)}' if isinstance(v, (int, float)) else f'{k}: {v}')
+            text = '; '.join(parts)
+        else:
+            return
+        if text:
+            self.note(f'eval {key}', f'@{it} {text}'[:240])
+
     def _eval(self, it, metrics):
         if not isinstance(metrics, dict):
             self.skipped += 1
             return
+        modes = metrics.get('modes')
+        results = modes if isinstance(modes, dict) else metrics
+        for k, v in metrics.items():
+            if (results is metrics and _is_result(v)) or (k == 'modes' and results is modes) or not _name(k):
+                continue
+            self._eval_note(it, k, v)
         apps = {}
-        for app, m in list(metrics.items())[:MAX_FIELDS]:
-            if not _name(app) or not isinstance(m, dict):
+        for app, m in list(results.items())[:MAX_FIELDS]:
+            if not _name(app) or not _is_result(m):
                 continue
             out = {}
             for k, v in m.items():
