@@ -2,6 +2,7 @@
   python -m dreaming.demo --ckpt runs/modal/main/ckpt.pt --port 8000   (omit --ckpt for real OS only)"""
 import argparse
 import json
+import random
 import numpy as np
 import torch
 import uvicorn
@@ -23,7 +24,7 @@ canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;
 <div class="row"><div><div>REAL (deterministic code)</div><canvas id="real" width="256" height="192"></canvas></div>
 <div><div>NEURAL (world model, __NEURAL__)</div><canvas id="neural" width="256" height="192"></canvas></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
-<span id="info"></span></div>
+temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
 <p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
 <script>
 const PAL=__PAL__;
@@ -42,7 +43,7 @@ function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImag
  ctx.putImageData(img,0,0);}
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+location.pathname.replace(/\\/$/,'')+'/ws');
 ws.binaryType='arraybuffer'; let t0=performance.now();
-function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd}));cmd=null;}
+function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp}));cmd=null;}
 ws.onopen=send;
 ws.onmessage=e=>{const b=new Uint8Array(e.data);draw(cv.real,b,0);if(b.length>49152)draw(cv.neural,b,49152);
  const dt=performance.now()-t0;t0=performance.now();document.getElementById('info').textContent=` ${(1000/dt).toFixed(1)} fps`;
@@ -89,7 +90,7 @@ def index():
 @app.websocket('/ws')
 async def ws(sock: WebSocket):
     await sock.accept()
-    real = MicroOS()
+    real = MicroOS(random.randrange(10 ** 9))
     obs = real.reset()
     neural = STATE.get('neural')
     if neural:
@@ -97,7 +98,7 @@ async def ws(sock: WebSocket):
     while True:
         msg = json.loads(await sock.receive_text())
         if msg.get('cmd') == 'reset':
-            obs = real.reset()
+            obs = real.reset(random.randrange(10 ** 9))
             if neural: neural.sync(obs)
         elif msg.get('cmd') == 'sync' and neural:
             neural.sync(obs)
@@ -105,7 +106,7 @@ async def ws(sock: WebSocket):
         obs = real.step(a)
         frames = [obs_to_pixels(obs)]
         if neural:
-            frames.append(obs_to_pixels(neural.step(a)))
+            frames.append(obs_to_pixels(neural.step(a, float(msg.get('temp', 0.0)))))
         await sock.send_bytes(b''.join(f.astype(np.uint8).tobytes() for f in frames))
 
 

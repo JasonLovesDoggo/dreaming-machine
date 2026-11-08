@@ -11,7 +11,7 @@ OBS_KEYS = ['grid', 'cursor', 'doom_cols', 'doom_spr', 'doom_meta', 'state']
 
 
 def run_episode(seed, length):
-    o = MicroOS()
+    o = MicroOS(seed)
     obs = o.reset()
     d = Driver(o, seed)
     rec = {k: [obs[k]] for k in OBS_KEYS}

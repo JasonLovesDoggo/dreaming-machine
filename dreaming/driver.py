@@ -5,6 +5,7 @@ from collections import Counter
 from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, KEY_UP, KEY_DOWN,
                      KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
 from .tiles import CHARSET, CHAR_IDX
+from .pictures import KEYWORDS, IMAGE_EXTS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
 
@@ -15,13 +16,15 @@ TASK_EVENTS = {
     'doom': ['doom_fire', 'doom_kill', 'doom_hurt'],
     'windows': ['drag_move', 'close_explorer', 'close_paint', 'close_cards', 'close_doom', 'taskbar_focus'],
     'notepad': ['np_type', 'np_save', 'np_new', 'np_backspace', 'ex_open_txt'],
+    'images': ['ex_new_file', 'paint_loaded'],
     'noise': ['desk_select'],
 }
+UNKNOWN_WORDS = "IMG PHOTO TRIP MEME ART PIC SCAN WALLPAPER DOODLE BEST OLD THING STUFF".split()
 WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHIP IT NOW GPU MODEL TRAIN PLAY CARDS "
          "FILE SAVE NEW OK YES NO 123 2026 WIN NOTE MEETING AT 5:00 BUY MILK EGGS CALL MOM FIX BUG DEPLOY FRIDAY "
          "COFFEE PIZZA TONIGHT REMEMBER TO WATER PLANTS SOLITAIRE HIGH SCORE KILLS AMMO HP LOVE THIS COMPUTER "
          "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
-BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'windows': 0.8, 'noise': 0.4}
+BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4}
 
 
 class Driver:
@@ -279,6 +282,8 @@ class Driver:
                         yield from self.click((wc + 2) * T + r.randint(2, 50), (wr + 2 + i) * T + 4, double=True)
             else:
                 yield from self.open_app('paint')
+        while 'paint' in self.os.z and self.os.pt_load < 10:
+            yield from self.idle(1)
         if 'paint' not in self.os.z:
             return
         for _ in range(r.randint(2, 8)):
@@ -500,6 +505,64 @@ class Driver:
             yield from self.idle(r.randint(0, 6))
         if r.random() < 0.3:
             yield from self.close('notepad')
+
+    def make_name(self):
+        r = self.rng
+        kws = list(KEYWORDS)
+        if r.random() < 0.08:
+            words = [r.choice(UNKNOWN_WORDS)]
+        else:
+            words = [r.choice(kws) for _ in range(1 if r.random() < 0.75 else 2)]
+        name = (' ' if r.random() < 0.4 else '').join(words)
+        if r.random() < 0.2:
+            name = r.choice(['MY ', 'BIG ', 'TINY ', 'OLD ']) + name
+        if r.random() < 0.3:
+            name += str(r.randint(1, 99))
+        ext = r.choice(IMAGE_EXTS) if r.random() < 0.88 else '.TXT'
+        return name[:20 - len(ext)] + ext
+
+    def task_images(self):
+        r = self.rng
+        yield from self.open_app('explorer', 'C:/PICS' if r.random() < 0.8 else 'C:')
+        if 'explorer' not in self.os.z:
+            return
+        for _ in range(r.randint(1, 3)):
+            if 'explorer' not in self.os.z:
+                return
+            yield from self.ensure_focus('explorer')
+            wc, wr, w, h = self.win('explorer')
+            if self.os.ex_path == 'TRASH':
+                yield from self.click(*self.tile_xy(wc + 1, wr + 1))
+            items = self.os.fs[self.os.ex_path]
+            if len(items) >= 8:
+                cand = [i for i, (n, k) in enumerate(items) if k != 'folder']
+                if cand:
+                    i = r.choice(cand)
+                    yield from self.click((wc + 2) * T + r.randint(2, 40), (wr + 2 + i) * T + 4)
+                    yield from self.click(*self.tile_xy(wc + 6, wr + 1, 2 * T))
+            yield from self.click(*self.tile_xy(wc + 9, wr + 1, 2 * T))
+            if self.os.ex_naming is None:
+                continue
+            yield from self.type_text(self.make_name())
+            yield from self.idle(r.randint(0, 4))
+            yield from self.press_key(KEY_ENTER)
+            yield from self.idle(r.randint(1, 5))
+            if self.os.ex_sel < 0 or r.random() < 0.1:
+                continue
+            i = self.os.ex_sel
+            yield from self.click((wc + 2) * T + r.randint(2, 50), (wr + 2 + i) * T + r.randint(1, 6), double=True)
+            if self.os.focus == 'paint':
+                while 'paint' in self.os.z and self.os.pt_load < 10:
+                    yield from self.idle(1)
+                yield from self.idle(r.randint(3, 25))
+                if r.random() < 0.2:
+                    yield from self.task_paint(draw_only=True)
+                elif r.random() < 0.5:
+                    yield from self.close('paint')
+                return
+            if self.os.focus == 'notepad':
+                yield from self.task_notepad(type_only=True)
+                return
 
     def task_noise(self):
         r = self.rng

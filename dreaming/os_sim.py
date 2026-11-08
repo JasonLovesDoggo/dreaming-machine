@@ -5,6 +5,7 @@ import numpy as np
 from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, grid_to_pixels, draw_cursor, RANKS,
                     NCH, CHARSET)
 from . import doom as dm
+from . import pictures as pics
 
 APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13)}
 APPS = list(APP_SIZES)
@@ -60,11 +61,15 @@ def line_cells(x0, y0, x1, y1):
 
 
 class MicroOS:
-    def __init__(self):
+    def __init__(self, seed=0):
+        self.seed = seed
         self.reset()
 
     # ------------------------------------------------------------------ state
-    def reset(self):
+    def reset(self, seed=None):
+        if seed is not None:
+            self.seed = seed
+        self.pic_rng = np.random.RandomState(self.seed % (2 ** 31))
         self.t = 0
         self.mx, self.my, self.btn = SCREEN_W // 2, SCREEN_H // 2, 0
         self.last_press_t, self.last_press_xy = -100, (0, 0)
@@ -80,7 +85,7 @@ class MicroOS:
             'TRASH': [('OLD.TXT', 'txt')],
         }
         self.origin = {'OLD.TXT': 'C:/DOCS'}
-        self.pictures = {n: make_picture(n) for n, k in self.fs['C:/PICS']}
+        self.pictures = {n: pics.generate(n, self.pic_rng) for n, k in self.fs['C:/PICS']}
         self.new_pic = 1
         self.texts = {
             'README.TXT': 'WELCOME TO DREAMING MACHINE!\nDOUBLE CLICK AN ICON TO OPEN IT.\nDRAG WINDOWS BY THEIR TITLE BAR.',
@@ -98,9 +103,11 @@ class MicroOS:
     def _reset_app(self, app, arg=None):
         if app == 'explorer':
             self.ex_path, self.ex_sel = (arg or 'C:'), -1
+            self.ex_naming = None
         elif app == 'paint':
             self.pt_canvas = np.zeros((CANVAS_H, CANVAS_W), np.uint8)
             self.pt_color, self.pt_file, self.pt_drawing, self.pt_last = 1, None, False, None
+            self.pt_load = 0 if arg else 10
             if arg:
                 self.pt_canvas = self.pictures[arg].copy()
                 self.pt_file = arg
@@ -197,6 +204,10 @@ class MicroOS:
             fire = press and self._in_doom_view(mx, my)
             dkey = key if key in (1, 2, 3, 4, 5) else (KEY_FIRE if key == KEY_CHAR0 else 0)
             events += self.doom.step(dkey, fire)
+        if 'paint' in self.z and self.pt_load < 10:
+            self.pt_load += 1
+            if self.pt_load == 10:
+                events.append('paint_loaded')
         self.btn = btn
         self.t += 1
         return self.observe(events)
@@ -248,6 +259,9 @@ class MicroOS:
 
     def _key(self, key, events):
         app = self.focus
+        if app == 'explorer' and self.ex_naming is not None:
+            self._ex_name_key(key, events)
+            return
         if key == KEY_ESC and app:
             self.close_app(app, events)
         elif app == 'notepad':
@@ -274,6 +288,9 @@ class MicroOS:
     # ------------------------------------------------------------------ explorer
     def _press_explorer(self, mx, my, lc, lr, dbl, events):
         trash = self.ex_path == 'TRASH'
+        if self.ex_naming is not None and not (lr == 1 and lc in (9, 10)):
+            self.ex_naming = None
+            events.append('ex_name_cancel')
         if lr == 1:
             if lc == 1:
                 if self.ex_path != 'C:':
@@ -283,6 +300,10 @@ class MicroOS:
                 self._ex_open(events)
             elif lc in (6, 7):
                 self._ex_delete(events)
+            elif not trash and lc in (9, 10):
+                if len(self.fs[self.ex_path]) < 9:
+                    self.ex_naming, self.ex_sel = '', -1
+                    events.append('ex_new')
             elif trash and 9 <= lc <= 11:
                 self._ex_restore(events)
             elif trash and 12 <= lc <= 14:
@@ -301,6 +322,33 @@ class MicroOS:
                 self._ex_open(events)
         else:
             self.ex_sel = -1
+
+    def _ex_name_key(self, key, events):
+        if key >= KEY_CHAR0:
+            if len(self.ex_naming) < 20:
+                self.ex_naming += CHARSET[key - KEY_CHAR0]
+                events.append('ex_name_type')
+        elif key == KEY_DEL:
+            self.ex_naming = self.ex_naming[:-1]
+        elif key == KEY_ESC:
+            self.ex_naming = None
+            events.append('ex_name_cancel')
+        elif key == KEY_ENTER:
+            name = self.ex_naming.strip()
+            items = self.fs[self.ex_path]
+            taken = {n for folder in self.fs.values() for n, _ in folder}
+            if name and name not in taken and len(items) < 9:
+                kind = 'png' if pics.is_image(name) else 'txt'
+                items.append((name, kind))
+                if kind == 'png':
+                    self.pictures[name] = pics.generate(name, self.pic_rng)
+                else:
+                    self.texts[name] = ''
+                self.ex_sel = len(items) - 1
+                events.append('ex_new_file')
+            else:
+                events.append('ex_name_invalid')
+            self.ex_naming = None
 
     def _ex_open(self, events):
         items = self.fs[self.ex_path]
@@ -361,6 +409,8 @@ class MicroOS:
 
     # ------------------------------------------------------------------ paint
     def _press_paint(self, mx, my, lc, lr, dbl, events):
+        if self.pt_load < 10:
+            return
         if lr == 1:
             if 1 <= lc <= 8:
                 self.pt_color = lc - 1
@@ -619,18 +669,27 @@ class MicroOS:
             items = [(1, 'UP'), (3, 'OPEN'), (6, 'DEL')]
             if self.ex_path == 'TRASH':
                 items += [(9, 'UNDEL'), (12, 'EMPTY')]
+            else:
+                items += [(9, 'NEW')]
             self._toolbar(g, wc, wr, w, items)
             for i, (name, kind) in enumerate(self.fs[self.ex_path]):
                 sel = i == self.ex_sel
                 g[wr + 2 + i, wc + 1] = ATLAS[('mini', 'png' if kind == 'png' else kind if kind in ('folder', 'exe') else 'file', sel)]
                 put_text(g, wr + 2 + i, wc + 2, name.ljust(26), 'sel' if sel else 'body')
+            n = len(self.fs[self.ex_path])
+            if self.ex_naming is not None and n < 9:
+                g[wr + 2 + n, wc + 1] = ATLAS[('mini', 'png' if pics.is_image(self.ex_naming) else 'file', True)]
+                put_text(g, wr + 2 + n, wc + 2, (self.ex_naming + '_').ljust(26), 'sel')
         elif app == 'paint':
             title = 'PAINT' + (' - ' + self.pt_file if self.pt_file else '')
             wc, wr, w, h = self._frame(g, app, title, 'body')
-            self._toolbar(g, wc, wr, w, [(10, 'CLEAR'), (14, 'SAVE')])
+            self._toolbar(g, wc, wr, w, [(10, 'CLEAR'), (14, 'SAVE')] if self.pt_load >= 10 else [(10, 'LOADING...')])
             for i in range(8):
                 g[wr + 1, wc + 1 + i] = ATLAS[('swatch', i, i == self.pt_color)]
             cv = self.pt_canvas.astype(np.int64)
+            if self.pt_load < 10:
+                cv = cv.copy()
+                cv[self.pt_load * 2:] = 0
             ids = canvas_id(cv[0::2, 0::2], cv[0::2, 1::2], cv[1::2, 0::2], cv[1::2, 1::2])
             g[wr + 2:wr + 12, wc + 1:wc + 17] = ids
         elif app == 'cards':
@@ -717,12 +776,13 @@ class MicroOS:
         sk = 0 if self.c_sel is None else (1 if self.c_sel[0] == 'waste' else 2)
         f += [len(self.stock) // 2, len(self.waste) // 2] + [len(x) for x in self.found] + [sk, self.deal_no % 8]
         f += [int(self.c_dragging), min(len(self.np_text) // 16, 31), int(self.np_file is not None)]
+        f += [int(self.ex_naming is not None), len(self.ex_naming or '') // 3, self.pt_load]
         f += self.doom.state_fields() if 'doom' in self.z else [0] * 6
         return np.array(f, np.uint8)
 
 
 STATE_VOCAB = [2, 32, 24] * 5 + [6, 2, 2, 10, 8, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
-                                 16, 12, 16, 11, 11, 10]
+                                 2, 8, 11, 16, 12, 16, 11, 11, 10]
 
 
 @lru_cache(maxsize=65536)
