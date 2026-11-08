@@ -303,8 +303,11 @@ def test_deadline_kills_descendants(tmp_path):
     rc, timed_out = run_with_deadline([sys.executable, '-c', script], time.time() + 1, grace=.2)
     assert timed_out and rc == -signal.SIGKILL
     for pid in pids.read_text().split():
-        stat = Path(f'/proc/{pid}/stat')
-        assert not stat.exists() or stat.read_text().split()[2] == 'Z'
+        try:
+            state = Path(f'/proc/{pid}/stat').read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        assert state == 'Z'
 
 
 def test_tick_errors_and_normal_exit():
@@ -342,3 +345,98 @@ def test_mirror_and_web_parser(tmp_path):
         merge_metrics(src, dst)
     with pytest.raises(ValueError, match='destination'):
         merge_metrics(src, dst.with_name('other.jsonl'))
+
+
+def _ledger(end=None):
+    rows = [dict(start=0., deadline=8 * 3600., end=3600.), dict(start=4000., deadline=4000. + 6 * 3600)]
+    if end is not None:
+        rows[-1]['end'] = end
+    return rows
+
+
+def test_continuation_waits_until_boundary_complete_and_published():
+    from dreaming.cluster import continuation_budget
+    snap = _ledger()
+    assert continuation_budget(_ledger(), snap, 20000, 20000, 20000, 9000., 1e9) is None
+    assert continuation_budget(_ledger(9000.), snap, 19000, 19000, 20000, 9000., 1e9) is None
+    assert continuation_budget(_ledger(9000.), snap, 20000, 19000, 20000, 9000., 1e9) is None
+
+
+def test_continuation_budget_sums_ledger_and_respects_stop():
+    from dreaming.cluster import continuation_budget
+    snap = _ledger()
+    used = 3600. + 5000.
+    assert continuation_budget(_ledger(9000.), snap, 20000, 20000, 20000, 9100., 1e9) == 8 * 3600 - used - 1
+    assert continuation_budget(_ledger(9000.), snap, 20000, 20000, 20000, 9100., 9100. + 7200) == 7200 - 1
+    with pytest.raises(ValueError, match='insufficient'):
+        continuation_budget(_ledger(9000.), snap, 20000, 20000, 20000, 9100., 9100. + 600)
+
+
+def test_continuation_refuses_duplicates():
+    from dreaming.cluster import continuation_budget
+    snap = _ledger()
+    extra = _ledger(9000.) + [dict(start=9500., deadline=20000.)]
+    for records in (extra, [dict(r, start=r['start'] + 1) for r in _ledger(9000.)]):
+        with pytest.raises(ValueError, match='duplicate'):
+            continuation_budget(records, snap, 20000, 20000, 20000, 9100., 1e9)
+    with pytest.raises(ValueError, match='duplicate'):
+        continuation_budget(_ledger(9000.), [], 20000, 20000, 20000, 9100., 1e9)
+    with pytest.raises(ValueError, match='advanced'):
+        continuation_budget(_ledger(9000.), snap, 21000, 20000, 20000, 9100., 1e9)
+    bad = [dict(start=0., deadline=1.)] + _ledger(9000.)[1:]
+    with pytest.raises(ValueError, match='never ended'):
+        continuation_budget(bad, bad, 20000, 20000, 20000, 9100., 1e9)
+
+
+def test_continuation_cfg_uses_saved_lock():
+    from dreaming.cluster import check_lock, config_row, continuation_cfg
+    lock = check_lock(config('overnight-test', extra_shards=400), None)
+    cfg = continuation_cfg('overnight-test', lock, 20000, 65000, 1000, 3600., 100.)
+    assert cfg['deadline'] == 3700. and cfg['budget_hours'] == 1 and cfg['total_cap_hours'] == 8
+    cmd = torchrun_command(cfg, resume=cfg['resume'])
+    value = lambda k: cmd[cmd.index(k) + 1]
+    assert (value('--extra-shards'), value('--iters'), value('--ckpt-every'), value('--chunk')) == ('400', '65000', '1000', '45000')
+    assert value('--resume') == '/out/runs/overnight-test/ckpt_020000.pt' and value('--restart-iter') == '5000'
+    assert '--sampler-v2' not in cmd
+    assert check_lock(cfg, lock) == lock
+    row = config_row(cfg)
+    assert row['it'] == 20000 and row['config']['phase_end'] == 65000 and row['config']['checkpoint_every'] == 1000
+    with pytest.raises(ValueError):
+        continuation_cfg('overnight-test', lock, 20000, 65500, 1000, 3600., 100.)
+
+
+def test_continuation_treats_null_end_as_active():
+    from dreaming.cluster import continuation_budget
+    records = _ledger()
+    records[-1]['end'] = None
+    assert continuation_budget(records, _ledger(), 20000, 20000, 20000, 9000., 1e9) is None
+
+
+def test_launch_resume_iter_only_pins_latest(monkeypatch, capsys):
+    monkeypatch.setenv('DREAMING_RUN_ID', 'resume-test')
+    import cluster_run
+    marker = dict(atlas_version=2, iter=16000)
+    names = {'ckpt.pt', 'run.json', 'ckpt_015000.pt', 'ckpt_016000.pt'}
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], True, marker))
+    monkeypatch.setattr(cluster_run, 'read_names', lambda: names)
+    cluster_run.launch(end_iter=65000, ckpt_every=1000, resume_iter=16000, dry_run=True)
+    output = capsys.readouterr().out
+    assert f'--resume {cluster_run.OUT_DIR}/ckpt_016000.pt' in output and '--chunk 49000' in output
+    cluster_run.launch(end_iter=65000, ckpt_every=1000, dry_run=True)
+    assert f'--resume {cluster_run.OUT_DIR}/ckpt_016000.pt' in capsys.readouterr().out
+    for bad, match in [(17000, 'must be in'), (5000, 'must be in'), (15000, 'overwrite numbered')]:
+        with pytest.raises(ValueError, match=match):
+            cluster_run.launch(end_iter=65000, ckpt_every=1000, resume_iter=bad, dry_run=True)
+    monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], False, None))
+    with pytest.raises(ValueError, match='requires an existing'):
+        cluster_run.launch(end_iter=65000, ckpt_every=1000, resume_iter=15000, dry_run=True)
+
+
+def test_resume_choice_rejects_bad_types():
+    from dreaming.cluster import resume_choice
+    assert resume_choice(16000, {'ckpt_016000.pt'}) == (16000, 'ckpt_016000.pt')
+    with pytest.raises(ValueError, match='missing'):
+        resume_choice(16000, {'ckpt_015000.pt'})
+    for bad in (True, 15000.0, -1):
+        with pytest.raises(ValueError):
+            resume_choice(16000, {'ckpt_015000.pt'}, bad)

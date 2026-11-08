@@ -248,3 +248,54 @@ class CalibrationGuard:
             self.summarized = True
         if projected > self.kill_at:
             logging.warning('projected end %.0f exceeds kill_at %.0f (warning only)', projected, self.kill_at)
+
+
+def resume_choice(marker_iter, names, resume_iter=0, restart_iter=5000):
+    """(start_iter, checkpoint basename) for the latest marker; an explicit pin must equal it.
+
+    Resuming earlier would overwrite later numbered checkpoints, so that needs a new run id."""
+    it = resume_iter or marker_iter
+    if isinstance(it, bool) or not isinstance(it, int) or not restart_iter < it <= marker_iter:
+        raise ValueError(f'resume iteration must be in ({restart_iter}, {marker_iter}]')
+    if it != marker_iter:
+        raise ValueError(f'resume iteration {it} is before latest marker {marker_iter}: '
+                         'would overwrite numbered checkpoints; use a new run id')
+    name = f'ckpt_{it:06d}.pt'
+    if name not in names:
+        raise ValueError(f'completed checkpoint {name} missing; refusing partial ckpt.pt')
+    return it, name
+
+
+def continuation_budget(records, snapshot, out_iter, published_iter, after_iter, now, stop_at,
+                        total_cap_hours=8., min_hours=0.5):
+    """Seconds for the single continuation, or None while the boundary run is still finishing."""
+    if not snapshot or [(r['start'], r['deadline']) for r in records] != [(r['start'], r['deadline']) for r in snapshot]:
+        raise ValueError('ledger changed since controller start: refusing duplicate continuation')
+    if any(r.get('end') is None for r in records[:-1]):
+        raise ValueError('earlier ledger entry never ended')
+    if out_iter > after_iter or published_iter > after_iter:
+        raise ValueError('run already advanced past the continuation boundary')
+    if records[-1].get('end') is None or out_iter < after_iter or published_iter < after_iter:
+        return None
+    used = sum(r['end'] - r['start'] for r in records)
+    budget = min(total_cap_hours * 3600 - used, stop_at - now, 8 * 3600) - 1
+    if budget < min_hours * 3600:
+        raise ValueError('insufficient budget for continuation')
+    return budget
+
+
+def continuation_cfg(run_id, lock, after_iter, end_iter, ckpt_every, budget, now, total_cap_hours=8.):
+    cfg = config(run_id, 'long', end_iter=end_iter, start_iter=after_iter, ckpt_every=ckpt_every,
+                 budget_hours=budget / 3600, total_cap_hours=total_cap_hours, **lock)
+    check_lock(cfg, lock)
+    cfg['deadline'] = now + budget
+    cfg['resume'] = f'/out/runs/{run_id}/ckpt_{after_iter:06d}.pt'
+    return cfg
+
+
+def config_row(cfg, world_size=24):
+    return dict(kind='config', it=cfg['start_iter'], config=dict(
+        world_size=world_size, batch=cfg['batch'], unroll=cfg['unroll'],
+        samples_per_update=world_size * cfg['batch'] * cfg['unroll'], log_every=cfg['log_every'],
+        checkpoint_every=cfg['ckpt_every'], phase_end=cfg['end_iter'], schedule_end=cfg['iters'],
+        restart_iter=cfg['restart_iter'], warmup=cfg['warmup'], peak_lr=cfg['lr'], min_lr_frac=cfg['min_lr_frac']))

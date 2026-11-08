@@ -109,3 +109,8 @@ Before launch check quota for all three nodes, source existence, data/holdout
 settings, output identity, no concurrent writer, remaining budget and estimated
 time to the next checkpoint. CPU tests and read-only previews do not demonstrate
 actual distributed GPU execution; inspect RDMA/NCCL logs on the first real launch.
+
+## Automatic continuation (no quality pause)
+
+`DREAMING_RUN_ID=<id> modal run --detach cluster_run.py::auto_continue --after-iter 20000 --end-iter 65000 --ckpt-every 1000 --stop-at 2026-11-08T14:30:00Z`
+starts a 1-CPU controller. It records the ledger, then checks every 30 s for up to 90 min until the active ledger entry has ended and both the output and main `run.json` show `--after-iter`. After a 30 s handoff it calls `train_cluster.remote` exactly once. The config comes from the saved `launch.json` (LR, horizon, extra shards and the rest), the run resumes from `ckpt_<after>.pt`, and the budget is `min(8h total cap - sum of ledger durations, stop_at - now) - 1s`. It refuses to run if the ledger changed, `continuation.json` already exists, or the run is past the boundary. Before launching it appends a dashboard `config` row (`phase_end`, `checkpoint_every`) to `metrics.jsonl`.
