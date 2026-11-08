@@ -9,7 +9,7 @@ from datetime import datetime
 
 import modal
 
-from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, config, config_row, resume_choice, continuation_budget,
+from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, check_fork_lock, config, config_row, resume_choice, continuation_budget,
                               continuation_cfg, lock_config, merge_metrics,
                               fork_source, launch_deadline,
                               publish_checkpoints, publish_set, run_with_deadline,
@@ -202,7 +202,7 @@ def read_source_state(source_id):
         if name not in names:
             raise ValueError(f'source run is missing {name}')
         return json.loads(b''.join(volume.read_file(f'{directory}/{name}')))
-    return read('run.json'), read('ledger.json'), names
+    return read('run.json'), read('ledger.json'), names, read('launch.json')
 
 
 def fork_target_names():
@@ -233,7 +233,7 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_ever
         if lock is not None or resumed or marker is not None or records or any(
                 name.startswith('ckpt') or name in {'launch.json', 'ledger.json'} for name in fork_target_names()):
             raise ValueError('fork target must be fresh, without launch.json or checkpoints')
-        source_marker, source_records, source_names = read_source_state(SOURCE_RUN_ID)
+        source_marker, source_records, source_names, source_lock = read_source_state(SOURCE_RUN_ID)
         source, inherited = fork_source(SOURCE_RUN_ID, RUN_ID, source_iter, source_marker, source_names, source_records)
     if picture_frac > 0 and not PICTURE_VOLUME:
         raise ValueError('picture training requires DREAMING_PICTURE_VOLUME mounted read-only at /pic')
@@ -250,6 +250,8 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_ever
                  holdout_episodes=holdout_episodes, sampler_v2=sampler_v2,
                  source=source, total_cap_hours=total_cap_hours, picture_data=picture_data,
                  picture_frac=picture_frac, picture_holdout_episodes=picture_holdout_episodes)
+    if source_iter:
+        check_fork_lock(cfg, source_lock)
     check_lock(cfg, lock)
     check_budget(inherited + records, budget_hours * 3600, total_cap_hours * 3600)
     cfg['deadline'] = launch_deadline(time.time(), budget_hours, stop_at)

@@ -145,7 +145,8 @@ def fork_launcher(monkeypatch):
     monkeypatch.setattr(cluster_run, 'read_state', lambda: (None, [], False, None))
     monkeypatch.setattr(cluster_run, 'fork_target_names', lambda: set())
     monkeypatch.setattr(cluster_run, 'read_source_state', lambda source_id: (
-        dict(iter=24000), [dict(start=0, deadline=10000, end=3600)], {'ckpt_024000.pt'}))
+        dict(iter=24000), [dict(start=0, deadline=10000, end=3600)], {'ckpt_024000.pt'},
+        {k: v for k, v in lock_config_values(400).items() if not k.startswith('picture_')}))
 
     def forbidden(*args, **kwargs):
         raise AssertionError('dry-run must not call Modal functions')
@@ -155,13 +156,46 @@ def fork_launcher(monkeypatch):
 
 
 def test_fork_launch(fork_launcher, capsys):
-    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1.,
+    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., extra_shards=400,
                          picture_data='/pic/train/part_00,/pic/train/part_01', picture_frac=.15, dry_run=True)
     output = capsys.readouterr().out
     assert '--resume /src/runs/overnight_20261108_b30024/ckpt_024000.pt' in output
     assert '"start_iter": 24000' in output and '--restart-iter 5000' in output
     assert '--picture-frac 0.15' in output and '--picture-data /pic/train/part_00,/pic/train/part_01' in output
     assert '"inherited_from": "overnight_20261108_b30024"' in output
+    assert '--extra-shards 400' in output
+
+
+def lock_config_values(extra_shards):
+    from dreaming.cluster import check_lock
+    return check_lock(config('source-test', extra_shards=extra_shards), None)
+
+
+def test_fork_source_lock_mismatch(fork_launcher):
+    with pytest.raises(ValueError, match='source launch.json lock mismatch: extra_shards'):
+        fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., dry_run=True)
+
+
+def test_fork_source_lock_missing_keys():
+    from dreaming.cluster import check_fork_lock
+    cfg = config('target-test', extra_shards=400)
+    source_lock = lock_config_values(400)
+    source_lock.pop('batch')
+    source_lock['lr'] = .001
+    with pytest.raises(ValueError, match='lr, batch'):
+        check_fork_lock(cfg, source_lock)
+    with pytest.raises(ValueError, match='requires launch.json'):
+        check_fork_lock(cfg, None)
+
+
+def test_read_source_state_requires_launch_json(monkeypatch):
+    import cluster_run
+    volume = SimpleNamespace(
+        listdir=lambda directory: [SimpleNamespace(path=name) for name in ('run.json', 'ledger.json')],
+        read_file=lambda path: [b'{}'])
+    monkeypatch.setattr(cluster_run.modal.Volume, 'from_name', lambda name: volume)
+    with pytest.raises(ValueError, match='source run is missing launch.json'):
+        cluster_run.read_source_state('source-test')
 
 
 @pytest.mark.parametrize('case', ['active', 'empty-ledger', 'target-lock', 'target-ckpt', 'target-numbered', 'target-ledger',
@@ -190,22 +224,22 @@ def test_fork_refusals(fork_launcher, monkeypatch, case):
         monkeypatch.setattr(fork_launcher, 'SOURCE_RUN_ID', '')
     elif case == 'budget':
         records[0]['end'] = 8 * 3600
-    monkeypatch.setattr(fork_launcher, 'read_source_state', lambda source_id: (marker, records, names))
+    monkeypatch.setattr(fork_launcher, 'read_source_state', lambda source_id: (marker, records, names, lock_config_values(400)))
     with pytest.raises(ValueError):
-        fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., dry_run=True)
+        fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., extra_shards=400, dry_run=True)
 
 
 def test_stop_at_deadline(fork_launcher, monkeypatch, capsys):
     from datetime import datetime, timezone
     now = datetime(2026, 11, 8, 10, tzinfo=timezone.utc).timestamp()
     monkeypatch.setattr(fork_launcher.time, 'time', lambda: now)
-    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=2.,
+    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=2., extra_shards=400,
                          stop_at='2026-11-08T11:00:00Z', dry_run=True)
     cfg = json.JSONDecoder().raw_decode(capsys.readouterr().out)[0]
     assert cfg['deadline'] == now + 3600
     for stop_at in ('2026-11-08T10:29:59Z', '2026-11-08T09:00:00Z', '2026-11-08T11:00:00'):
         with pytest.raises(ValueError):
-            fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=2.,
+            fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=2., extra_shards=400,
                                  stop_at=stop_at, dry_run=True)
 
 

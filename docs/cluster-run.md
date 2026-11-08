@@ -124,9 +124,9 @@ export DREAMING_RUN_ID=overnight_20261108_pic24k
 export DREAMING_SOURCE_RUN_ID=overnight_20261108_b30024
 export DREAMING_PICTURE_VOLUME=dreaming-picture-pilot-v1
 # Read-only SDK preview (no app launch/volume creation):
-python -c 'import cluster_run; cluster_run.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1, stop_at="2026-11-08T14:30:00Z", picture_data="/pic/train/part_00,/pic/train/part_01", picture_frac=.15, dry_run=True)'
+python -c 'import cluster_run; cluster_run.launch(source_iter=24000, extra_shards=400, lr=0.0004, warmup=200, min_lr_frac=0.1, restart_iter=5000, iters=65000, batch=32, unroll=6, end_iter=65000, ckpt_every=1000, budget_hours=1, stop_at="2026-11-08T14:29:00Z", picture_data="/pic/train/part_00,/pic/train/part_01", picture_frac=.15, dry_run=True)'
 # This command allocates GPUs; execute only after reviewing the preview:
-modal run --detach cluster_run.py::launch --source-iter 24000 --end-iter 65000 --ckpt-every 1000 --budget-hours 1 --stop-at 2026-11-08T14:30:00Z --picture-data /pic/train/part_00,/pic/train/part_01 --picture-frac 0.15
+modal run --detach cluster_run.py::launch --source-iter 24000 --extra-shards 400 --lr 0.0004 --warmup 200 --min-lr-frac 0.1 --restart-iter 5000 --iters 65000 --batch 32 --unroll 6 --ckpt-every 1000 --end-iter 65000 --budget-hours 1 --stop-at 2026-11-08T14:29:00Z --picture-data /pic/train/part_00,/pic/train/part_01 --picture-frac 0.15
 ```
 
 Set an appropriate future UTC stop time and allocation budget: the source ledger
@@ -135,6 +135,10 @@ is copied with `inherited_from` into the new ledger and counts against the same
 less than 30 minutes remaining is refused (the 600-second cleanup reserve remains).
 This ledger check is not an atomic cross-app lock: operators must prevent racing
 launches/restarts of the source or multiple forks of it.
+
+The source `launch.json` is required. Every locked setting must match it except
+the checkpoint source path and picture data/fraction. Mismatches name the keys
+to correct; in particular, preserve `--extra-shards 400` rather than its default 40.
 
 This resumes iteration and optimizer state at 24000 without restarting the LR
 schedule: the anchor remains 5000, warmup 200, peak LR 4e-4, horizon 65000, floor .1.

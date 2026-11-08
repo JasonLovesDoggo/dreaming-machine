@@ -71,6 +71,16 @@ def check_lock(cfg, existing):
     return lock
 
 
+def check_fork_lock(cfg, source_lock):
+    if not isinstance(source_lock, dict):
+        raise ValueError('source run requires launch.json lock')
+    source_lock = dict(PICTURE_DEFAULTS, **source_lock)
+    mismatched = [key for key in LOCK_KEYS if key not in {'source', 'picture_data', 'picture_frac'}
+                  and (key not in source_lock or cfg[key] != source_lock[key])]
+    if mismatched:
+        raise ValueError(f'source launch.json lock mismatch: {", ".join(mismatched)}')
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
