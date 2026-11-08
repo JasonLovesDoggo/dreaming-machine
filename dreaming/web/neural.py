@@ -7,6 +7,15 @@ import numpy as np
 from ..dataset import OBS_KEYS
 
 
+def _numbered(directory):
+    checkpoints = []
+    for path in glob.glob(os.path.join(directory, 'ckpt_*.pt')):
+        iteration = os.path.basename(path)[5:-3]
+        if iteration.isdigit():
+            checkpoints.append((int(iteration), path))
+    return sorted(checkpoints)
+
+
 class Neural:
     """One world model stepping one dreamed computer. Copies share weights but keep their own memory."""
 
@@ -48,22 +57,21 @@ class Checkpoints:
     """Primary run plus compatible published runs; keeps a single model in memory."""
 
     def __init__(self):
-        self.dir, self.root, self.device, self.current = None, None, 'cpu', None
+        self.dir, self.root, self.device, self.preferred = None, None, 'cpu', None
         self._loaded = {}
 
     def configure(self, ckpt_dir, device, name=None, run_root=None):
         self.dir, self.root, self.device = ckpt_dir, run_root, device
         self._loaded = {}
         names = self.names()
-        primary = [n for n in names if '/' not in n]
-        self.current = name if name in names else (primary or names or [None])[-1]
+        self.preferred = name if name in names else None
         if self.current:
             self.load(self.current)
 
     def paths(self):
         paths = {}
         if self.dir and os.path.isdir(self.dir):
-            numbered = sorted(glob.glob(os.path.join(self.dir, 'ckpt_*.pt')))
+            numbered = [path for _, path in _numbered(self.dir)]
             primary = numbered or glob.glob(os.path.join(self.dir, 'ckpt.pt'))
             paths.update((os.path.basename(p), p) for p in primary)
         if self.root:
@@ -79,18 +87,22 @@ class Checkpoints:
                     latest = int(metadata['iter'])
                 except (OSError, ValueError, TypeError, KeyError, AttributeError):
                     continue
-                for path in sorted(glob.glob(os.path.join(directory, 'ckpt_*.pt'))):
+                for iteration, path in _numbered(directory):
                     filename = os.path.basename(path)
-                    try:
-                        iteration = int(filename[5:-3])
-                    except ValueError:
-                        continue
                     if iteration <= latest:
                         paths[f'{os.path.basename(directory)}/{filename}'] = path
         return paths
 
     def names(self):
         return list(self.paths())
+
+    def default_name(self, names=None):
+        names = self.names() if names is None else names
+        return self.preferred if self.preferred in names else (names or [None])[-1]
+
+    @property
+    def current(self):
+        return self.default_name()
 
     def load(self, name):
         path = self.paths()[name]

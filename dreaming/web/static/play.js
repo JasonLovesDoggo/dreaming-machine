@@ -230,7 +230,7 @@ function bindOverlays() {
 
 function fillCheckpoints() {
   const sel = $('ckpt');
-  for (const name of cfg.ckpts) {
+  for (const name of [...cfg.ckpts].reverse()) {
     const m = name.match(/ckpt_0*(\d+)\.pt/);
     const run = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) + ' · ' : '';
     sel.add(new Option(m ? run + 'iter ' + Number(m[1]).toLocaleString() : name, name, false, name === cfg.current));

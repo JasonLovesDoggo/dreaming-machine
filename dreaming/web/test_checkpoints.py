@@ -33,10 +33,10 @@ class CheckpointsTest(unittest.TestCase):
     def configure(self, **kwargs):
         self.checkpoints.configure(str(self.primary), 'cpu', run_root=str(self.root), **kwargs)
 
-    def test_publish_does_not_replace_primary(self):
+    def test_publish_becomes_default_without_replacing_primary_file(self):
         run = self.publish()
         self.configure()
-        self.assertEqual(self.checkpoints.current, 'ckpt_005000.pt')
+        self.assertEqual(self.checkpoints.current, 'atlas_v2_first_5k/ckpt_005000.pt')
         self.assertEqual(self.checkpoints.names(), ['ckpt_005000.pt', 'atlas_v2_first_5k/ckpt_005000.pt'])
         original = (self.primary / 'ckpt_005000.pt').read_bytes()
         self.checkpoints.load('atlas_v2_first_5k/ckpt_005000.pt')
@@ -86,6 +86,48 @@ class CheckpointsTest(unittest.TestCase):
         self.configure()
         self.publish()
         self.assertIn('atlas_v2_first_5k/ckpt_005000.pt', self.checkpoints.names())
+        self.assertEqual(self.checkpoints.current, 'atlas_v2_first_5k/ckpt_005000.pt')
+
+    def test_numeric_order_and_publication_boundary(self):
+        run = self.publish(iter=10000)
+        for name in ('ckpt_9000.pt', 'ckpt_10000.pt', 'ckpt_11000.pt'):
+            (run / name).touch()
+        self.configure()
+        self.assertEqual(self.checkpoints.names()[-2:], [
+            'atlas_v2_first_5k/ckpt_9000.pt', 'atlas_v2_first_5k/ckpt_10000.pt'])
+        self.assertEqual(self.checkpoints.current, 'atlas_v2_first_5k/ckpt_10000.pt')
+
+    def test_new_publication_only_changes_new_sessions(self):
+        self.publish('run_a')
+        self.configure()
+        with patch.object(play, 'CHECKPOINTS', self.checkpoints):
+            automatic = play.Session()
+            existing = play.Session()
+            existing.command('load', 'ckpt_005000.pt')
+            original_model = existing.neural
+            self.publish('run_b')
+            newest = play.Session()
+            self.assertEqual(newest.checkpoint, 'run_b/ckpt_005000.pt')
+            automatic.command(None)
+            self.assertEqual(automatic.checkpoint, 'run_a/ckpt_005000.pt')
+            existing.command(None)
+            self.assertEqual(existing.checkpoint, 'ckpt_005000.pt')
+            self.assertIs(existing.neural, original_model)
+
+    def test_config_and_first_websocket_frame_use_refreshed_default(self):
+        self.configure()
+        self.load.return_value.step.return_value = play.MicroOS(123).reset()
+        with patch.object(app, 'CHECKPOINTS', self.checkpoints), patch.object(play, 'CHECKPOINTS', self.checkpoints):
+            client = TestClient(app.create_app(ckpt_refresh=self.publish))
+            config = client.get('/config').json()
+            expected = 'atlas_v2_first_5k/ckpt_005000.pt'
+            self.assertEqual(config['current'], expected)
+            self.assertEqual(config['ckpts'][-1], expected)
+            with client.websocket_connect('/ws') as ws:
+                ws.send_json(dict(x=0, y=0, btn=0, key=0, telemetry=True))
+                self.assertEqual(ws.receive_bytes()[:2], b'\x02\x00')
+                self.assertEqual(ws.receive_json()['checkpoint'], expected)
+            self.load.assert_called_with(str(self.root / expected), 'cpu')
 
     def test_load_command_acknowledges_selected_model(self):
         run = self.publish()
