@@ -37,6 +37,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, ckpt_
     app.add_api_route('/data', _page('data.html'), include_in_schema=False)
     app.add_api_route('/sprites', _page('atlas.html'), include_in_schema=False)
     app.add_api_route('/training', _page('training.html'), include_in_schema=False)
+    app.add_api_route('/analytics', _page('analytics.html'), include_in_schema=False)
 
     @app.get('/config')
     @volume_read
