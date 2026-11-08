@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ..tiles import PAL, CHARSET
@@ -21,6 +22,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None):
         CHECKPOINTS.configure(ckpt_dir, device, ckpt_name)
 
     app = FastAPI(title='Dreaming Computer')
+    app.add_middleware(GZipMiddleware, minimum_size=4096)
     app.mount('/static', StaticFiles(directory=STATIC), name='static')
     for router in (play.router, data_viewer.router, atlas.router, telemetry.router):
         app.include_router(router)
