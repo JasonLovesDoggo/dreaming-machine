@@ -99,6 +99,7 @@ def main():
     ap.add_argument('--out', default='runs/local')
     ap.add_argument('--max-steps-data', type=int, default=0)
     ap.add_argument('--iters', type=int, default=20000)
+    ap.add_argument('--chunk', type=int, default=0, help='stop after this many iters (resume later); LR schedule still uses --iters')
     ap.add_argument('--batch', type=int, default=16)
     ap.add_argument('--unroll', type=int, default=6)
     ap.add_argument('--lr', type=float, default=4e-4)
@@ -171,7 +172,8 @@ def main():
     gen = torch.Generator(device=device).manual_seed(rank)
     tl = time.time()
     agg = {}
-    for it in range(start_it, a.iters):
+    end_it = min(a.iters, start_it + a.chunk) if a.chunk else a.iters
+    for it in range(start_it, end_it):
         lr = a.lr * min(1, (it + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * it / a.iters)))
         for g in opt.param_groups:
             g['lr'] = lr
@@ -211,7 +213,7 @@ def main():
             print(f'it {it + 1} loss {float(total):.4f} lr {lr:.2e} gn {float(gn):.2f} ss {p_ss:.2f} '
                   f'| {msg} | {sps:.0f} samples/s', flush=True)
             agg, tl = {}, time.time()
-        if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == a.iters):
+        if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == end_it):
             ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it + 1, opt=opt.state_dict(), args=vars(a))
             torch.save(ck, os.path.join(a.out, 'ckpt.pt'))
             model.eval()

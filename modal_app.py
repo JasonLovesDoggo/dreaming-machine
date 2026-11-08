@@ -1,6 +1,6 @@
 """Modal entrypoints.
   modal run modal_app.py::gen_data --total-steps 20000000
-  modal run modal_app.py::train --gpus 8 --iters 30000
+  modal run modal_app.py::train --gpus 8   # resumes runs/main, trains one 10k chunk
   modal run modal_app.py::fetch   (download latest checkpoint + rollout pngs to ./runs/modal)
 """
 import modal
@@ -58,8 +58,8 @@ def train1(args: str):
 
 
 @app.local_entrypoint()
-def train(gpus: int = 8, iters: int = 30000, batch: int = 16, unroll: int = 6, run: str = 'main', extra: str = ''):
-    args = f'--out {RUNS}/{run} --iters {iters} --batch {batch} --unroll {unroll} --compile --resume auto {extra}'
+def train(gpus: int = 8, iters: int = 150000, chunk: int = 10000, batch: int = 32, unroll: int = 6, run: str = 'main', extra: str = ''):
+    args = f'--out {RUNS}/{run} --iters {iters} --chunk {chunk} --batch {batch} --unroll {unroll} --compile --resume auto {extra}'
     fn = train8 if gpus == 8 else train1
     print('exit', fn.remote(args))
 
@@ -77,13 +77,18 @@ def fetch(run: str = 'main'):
 
 
 web_image = (modal.Image.debian_slim(python_version='3.11')
-             .pip_install('numpy', 'pillow', 'fastapi[standard]')
+             .pip_install('torch', 'numpy', 'pillow', 'fastapi[standard]')
              .add_local_python_source('dreaming'))
 
 
-@app.function(image=web_image, cpu=2, memory=2048, min_containers=0, scaledown_window=600)
-@modal.concurrent(max_inputs=50)
+@app.function(image=web_image, gpu=['L4', 'A10G', 'T4', 'L40S'], volumes={'/vol': vol}, scaledown_window=300, timeout=24 * 3600)
+@modal.concurrent(max_inputs=20)
 @modal.asgi_app(label='dreaming-computer')
 def web():
-    from dreaming.demo import app as demo_app
-    return demo_app
+    import os
+    import dreaming.demo as d
+    d.DATA_DIR = '/vol/shards'
+    ck = '/vol/runs/main/ckpt.pt'
+    if os.path.exists(ck):
+        d.STATE['neural'] = d.Neural(ck, 'cuda')
+    return d.app

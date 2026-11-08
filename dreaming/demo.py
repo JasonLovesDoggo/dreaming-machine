@@ -1,25 +1,97 @@
 """Play the real micro-OS and the neural one side by side.
   python -m dreaming.demo --ckpt runs/modal/main/ckpt.pt --port 8000   (omit --ckpt for real OS only)"""
 import argparse
+import functools
+import glob
+import io
+import os
 import json
 import random
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from .os_sim import MicroOS, obs_to_pixels
 from .dataset import OBS_KEYS
 from .tiles import PAL, CHARSET
 
 app = FastAPI()
 STATE = {}
+DATA_DIR = os.environ.get('DATA_DIR', 'data/local')
+
+VIEWER = """<!doctype html><html><head><title>Dreaming Computer: training data</title><style>
+body{background:#1b1b1f;color:#ddd;font-family:monospace;margin:16px}img{width:768px;height:576px;image-rendering:pixelated;border:2px solid #444}
+select,button,input{font-family:monospace;margin:4px}a{color:#8cf}</style></head><body>
+<h2>Dreaming Computer: training data viewer</h2><a href="/">&larr; play the computer</a><br>
+shard <select id="shard"></select> episode <select id="ep"></select>
+<button id="play">play</button> speed <select id="spd"><option>1</option><option selected>2</option><option>4</option><option>8</option></select>x
+<button id="rnd">random spot</button><br>
+<input id="fr" type="range" min="0" value="0" style="width:768px"><br><span id="info"></span><br><img id="img">
+<script>
+let idx=null,playing=false,base=0,len=0;const $=i=>document.getElementById(i);
+async function init(){idx=await (await fetch('/data/index')).json();
+ for(const s of idx.shards){const o=document.createElement('option');o.textContent=s.name;$('shard').appendChild(o);}
+ if(!idx.shards.length){$('info').textContent='no shards in '+idx.dir;return;} pickShard();}
+function pickShard(){const s=idx.shards[$('shard').selectedIndex];$('ep').innerHTML='';
+ s.ep_len.forEach((l,i)=>{const o=document.createElement('option');o.textContent=i+' ('+l+' steps)';$('ep').appendChild(o);});pickEp();}
+function pickEp(){const s=idx.shards[$('shard').selectedIndex],e=$('ep').selectedIndex;base=s.ep_len.slice(0,e).reduce((a,b)=>a+b,0);len=s.ep_len[e];
+ $('fr').max=len-1;$('fr').value=0;show();}
+let busy=false;async function show(){if(busy)return;busy=true;const s=idx.shards[$('shard').selectedIndex];const f=+$('fr').value;
+ const r=await fetch(`/data/frame?shard=${s.name}&i=${base+f}`);const m=JSON.parse(r.headers.get('x-meta'));
+ $('img').src=URL.createObjectURL(await r.blob());$('info').textContent=`step ${f}/${len-1}  focus=${m.focus}  action x=${m.a[0]} y=${m.a[1]} btn=${m.a[2]} key=${m.key}`;busy=false;}
+$('shard').onchange=pickShard;$('ep').onchange=pickEp;$('fr').oninput=show;
+$('play').onclick=()=>{playing=!playing;$('play').textContent=playing?'pause':'play';};
+$('rnd').onclick=()=>{$('shard').selectedIndex=Math.floor(Math.random()*idx.shards.length);pickShard();
+ $('ep').selectedIndex=Math.floor(Math.random()*$('ep').options.length);pickEp();$('fr').value=Math.floor(Math.random()*len);show();};
+setInterval(()=>{if(playing&&!busy){$('fr').value=Math.min(len-1,+$('fr').value+ +$('spd').value);show();}},66);init();
+</script></body></html>"""
+
+
+@functools.lru_cache(maxsize=3)
+def _shard(name):
+    z = np.load(os.path.join(DATA_DIR, os.path.basename(name) + '.npz'))
+    return {k: z[k] for k in z.files}
+
+
+@app.get('/data')
+def data_page():
+    return HTMLResponse(VIEWER)
+
+
+@app.get('/data/index')
+def data_index():
+    out = []
+    for f in sorted(glob.glob(os.path.join(DATA_DIR, '*.npz'))):
+        name = os.path.basename(f)[:-4]
+        try:
+            with np.load(f) as z:
+                out.append(dict(name=name, ep_len=[int(x) for x in z['ep_len']]))
+        except Exception:
+            pass
+    return JSONResponse(dict(dir=DATA_DIR, shards=out))
+
+
+@app.get('/data/frame')
+def data_frame(shard: str, i: int):
+    from PIL import Image
+    from .os_sim import APPS
+    d = _shard(shard)
+    i = max(0, min(i, len(d['grid']) - 1))
+    obs = {k: d[k][i] for k in OBS_KEYS}
+    buf = io.BytesIO()
+    Image.fromarray(np.asarray(PAL, np.uint8)[obs_to_pixels(obs)]).save(buf, 'PNG')
+    foc = int(d['state'][i][3 * len(APPS)])
+    a = [int(v) for v in d['action'][i]]
+    key = a[3]
+    meta = dict(focus='desktop' if foc == 0 else APPS[foc - 1], a=a, key=key)
+    return Response(buf.getvalue(), media_type='image/png', headers={'x-meta': json.dumps(meta)})
 
 PAGE = """<!doctype html><html><head><title>Dreaming Computer</title><style>
 body{background:#181a20;color:#ddd;font-family:monospace;margin:20px}
 canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;cursor:none}
 .row{display:flex;gap:24px}.scr{position:relative;width:772px;height:580px}.grid{position:absolute;left:2px;top:2px;width:768px;height:576px;pointer-events:none;display:none;border:none;cursor:auto}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
 </style></head><body>
-<h2>Dreaming Computer: real simulator (left) vs world model (right)</h2>
+<h2>Dreaming Computer: real simulator (left) vs world model (right)</h2><a href="/data" style="color:#8cf">training data viewer &rarr;</a>
 <div class="row"><div><div>REAL (deterministic code)</div><div class="scr"><canvas id="real" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div>
 <div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
