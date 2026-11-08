@@ -139,10 +139,15 @@ def main():
     cfg = Config(d=a.d, layers=a.layers, heads=a.heads, mem=a.mem)
     model = WorldModel(cfg).to(device)
     start_it = 0
-    if a.resume:
+    ck = None
+    if a.resume == 'auto' and os.path.exists(os.path.join(a.out, 'ckpt.pt')):
+        a.resume = os.path.join(a.out, 'ckpt.pt')
+    if a.resume and a.resume != 'auto':
         ck = torch.load(a.resume, map_location=device)
         model.load_state_dict(ck['model'])
         start_it = ck.get('iter', 0)
+        if master:
+            print(f'resumed from {a.resume} at iter {start_it}', flush=True)
     if master:
         print(f'params {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M vocab {VOCAB}', flush=True)
     fwd = torch.compile(model) if a.compile else model
@@ -152,6 +157,8 @@ def main():
     nodecay = [p for n, p in model.named_parameters() if p.dim() < 2]
     opt = torch.optim.AdamW([{'params': decay, 'weight_decay': 0.05}, {'params': nodecay, 'weight_decay': 0}],
                             lr=a.lr, betas=(0.9, 0.95), fused=device == 'cuda')
+    if ck is not None and 'opt' in ck:
+        opt.load_state_dict(ck['opt'])
     amp = torch.autocast('cuda', dtype=torch.bfloat16) if device == 'cuda' else torch.autocast('cpu', enabled=False)
 
     q = queue.Queue(maxsize=4)
@@ -205,7 +212,7 @@ def main():
                   f'| {msg} | {sps:.0f} samples/s', flush=True)
             agg, tl = {}, time.time()
         if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == a.iters):
-            ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it + 1)
+            ck = dict(model=model.state_dict(), cfg=cfg.__dict__, iter=it + 1, opt=opt.state_dict(), args=vars(a))
             torch.save(ck, os.path.join(a.out, 'ckpt.pt'))
             model.eval()
             with amp:

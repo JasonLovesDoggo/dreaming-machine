@@ -33,6 +33,7 @@ def _train(args: str, gpus: int):
     import subprocess, shlex
     cmd = ['torchrun', f'--nproc_per_node={gpus}', '-m', 'dreaming.train', '--data', DATA] + shlex.split(args)
     print(' '.join(cmd), flush=True)
+    smi = subprocess.Popen(['nvidia-smi', '--query-gpu=index,utilization.gpu,memory.used', '--format=csv,noheader', '-l', '15'])
     p = subprocess.Popen(cmd)
     import threading, time
     def committer():
@@ -41,6 +42,7 @@ def _train(args: str, gpus: int):
             vol.commit()
     threading.Thread(target=committer, daemon=True).start()
     p.wait()
+    smi.terminate()
     vol.commit()
     return p.returncode
 
@@ -57,7 +59,7 @@ def train1(args: str):
 
 @app.local_entrypoint()
 def train(gpus: int = 8, iters: int = 30000, batch: int = 16, unroll: int = 6, run: str = 'main', extra: str = ''):
-    args = f'--out {RUNS}/{run} --iters {iters} --batch {batch} --unroll {unroll} --compile {extra}'
+    args = f'--out {RUNS}/{run} --iters {iters} --batch {batch} --unroll {unroll} --compile --resume auto {extra}'
     fn = train8 if gpus == 8 else train1
     print('exit', fn.remote(args))
 
