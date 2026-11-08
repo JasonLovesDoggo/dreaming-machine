@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from ..tiles import PAL, CHARSET
 from ..os_sim import EXTRA_KEYS, KEY_EXTRA0
-from . import atlas, data_viewer, play, telemetry, training
+from . import atlas, data_viewer, flight, play, telemetry, training
 from .neural import CHECKPOINTS
 from .settings import SETTINGS
 
@@ -30,7 +30,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, ckpt_
     app = FastAPI(title='Dreaming Computer')
     app.add_middleware(GZipMiddleware, minimum_size=4096)
     app.mount('/static', StaticFiles(directory=STATIC), name='static')
-    for router in (play.router, data_viewer.router, atlas.router, telemetry.router, training.router):
+    for router in (play.router, data_viewer.router, atlas.router, telemetry.router, training.router, flight.router):
         app.include_router(router)
     app.add_api_route('/', _page('play.html'), include_in_schema=False)
     app.add_api_route('/data', _page('data.html'), include_in_schema=False)

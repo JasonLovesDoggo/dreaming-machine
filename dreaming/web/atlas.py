@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from .. import doom as dm
 from ..apps import flight as fl
 from ..os_sim import MicroOS
-from ..driver import Driver
 from ..tiles import ATLAS, T, grid_to_pixels
 from .images import png
 
@@ -89,12 +88,10 @@ def doom_sheet():
 
 @router.get('/flight')
 def flight_sheet():
-    sim = MicroOS(7)
-    sim.open_app('flight')
-    driver = Driver(sim, 7, 'flight')
+    sim = fl.Flight(7)
     frames = []
     for i in range(230):
-        sim.step(next(driver.stream))
+        sim.step('W' if i < 30 else 'UP' if i < 45 else '')
         if i in (25, 90, 155, 220):
-            frames.append(_pad(grid_to_pixels(fl.render_tiles(sim.flight))))
+            frames.append(_pad(grid_to_pixels(fl.render_tiles(sim))))
     return png(_hcat(frames), 2)
