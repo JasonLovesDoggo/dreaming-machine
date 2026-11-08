@@ -30,7 +30,7 @@ class AnalyticsTest(unittest.TestCase):
             self.assertIsNone(re.search(r'''\[\s*['"]''' + forbidden + r'''['"]\s*\]''', source))
             self.assertNotIn('innerHTML', source)
         source = (ROOT / 'static' / 'analytics.js').read_text()
-        self.assertIn("fetch('/telemetry/summary'", source)
+        self.assertIn("fetch('telemetry/summary'", source)
 
     @unittest.skipIf(shutil.which('node') is None, 'node not installed')
     def test_core_helpers(self):
