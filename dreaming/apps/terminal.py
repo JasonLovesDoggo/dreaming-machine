@@ -133,14 +133,17 @@ class Terminal:
                 'RES: 256X192', 'CPU: 1 NEURAL CORE', 'GPU: IMAGINARY',
                 f'MEM: {memory} / 256 MB', f'APPS: {len(self.os.z)}']
         if wake:
-            info = ['DREAMER/DREAMING', '-----', 'HOST: INSIDE THE MODEL',
-                    'SHELL: DREAMSH', 'RES: 256X192', 'CPU: 1 NEURAL CORE',
+            info = ['DREAMER/DREAMING', '-----', 'SHELL: DREAMSH',
+                    'HOST: INSIDE THE MODEL', 'RES: 256X192', 'CPU: 1 NEURAL CORE',
                     'GPU: IMAGINARY', f'MEM: {memory} / 256 MB',
                     'YOU TRIED TO WAKE UP.', 'BUT THIS COMPUTER IS A DREAM.',
                     'NOTHING HERE IS REAL. KEEP PLAYING.']
             events.append('neofetch_egg')
         for i, text in enumerate(info):
-            if i < 3: self.lines.append((i, text))
+            if i < 3 and len(text) <= 20: self.lines.append((i, text))
+            elif i < 3:
+                self.lines.append((i, ''))
+                self.write(text)
             else: self.write(text)
         self.lines = self.lines[-40:]
         events.append('neofetch')
@@ -300,5 +303,5 @@ class Terminal:
             if isinstance(line, tuple):
                 logo_row, text = line
                 for c in range(7): g[wr + 1 + i, wc + 1 + c] = ATLAS[('neo_logo', logo_row, c)]
-                put_text(g, wr + 1 + i, wc + 8, text, 'term')
+                put_text(g, wr + 1 + i, wc + 9, text, 'term')
             else: put_text(g, wr + 1 + i, wc + 1, line, 'term')

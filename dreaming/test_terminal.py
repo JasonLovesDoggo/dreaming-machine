@@ -1,5 +1,5 @@
 """Terminal integration and interpreter regression checks."""
-from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB
+from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB, text_ids
 from .tiles import ATLAS, BLUE, CHARSET, NEO_LOGO, VOCAB
 
 
@@ -108,12 +108,21 @@ def test_neofetch():
     assert 'UPTIME: 42 MIN' in output and 'APPS: 1' in output
     for line in output:
         text = line[1] if isinstance(line, tuple) else line
-        assert len(text) <= (22 if isinstance(line, tuple) else 36)
+        assert len(text) <= (20 if isinstance(line, tuple) else 36)
         assert all(c in CHARSET for c in text)
     grid = o.observe([])['grid']
     wc, wr = o.pos['terminal']
     for r in range(3):
         for c in range(7): assert grid[wr + 1 + r, wc + 1 + c] == ATLAS[('neo_logo', r, c)]
+        text = output[r][1]
+        ids = text_ids(text, 'term')
+        logo_cells = set(range(wc + 1, wc + 8))
+        text_cells = set(range(wc + 9, wc + 9 + len(ids)))
+        assert logo_cells.isdisjoint(text_cells)
+        assert grid[wr + 1 + r, wc + 8] == ATLAS[('solid', 'hud')]
+        assert (grid[wr + 1 + r, wc + 9:wc + 9 + len(ids)] == ids).all()
+    os_ids = text_ids('OS: DREAMOS 1.0', 'term')
+    assert (grid[wr + 3, wc + 9:wc + 9 + len(os_ids)] == os_ids).all()
     assert len(NEO_LOGO) == 24 and all(len(row) == 56 for row in NEO_LOGO)
     assert (ATLAS.array[ATLAS[('neo_logo', 0, 0)]] == BLUE).any()
     assert ATLAS[('term_bar', 'red', 8)] == 1536 + 26
@@ -121,7 +130,8 @@ def test_neofetch():
     assert o.observe([])['grid'][wr + 1, wc + 1] == ATLAS[('neo_logo', 2, 0)]
     obs = command(o, 'NEOFETCH -WAKE')
     assert 'neofetch' in obs['events'] and 'neofetch_egg' in obs['events']
-    assert o.term.lines[-11:-8] == [(0, 'DREAMER/DREAMING'), (1, '-----'), (2, 'HOST: INSIDE THE MODEL')]
+    assert o.term.lines[-11:-8] == [(0, 'DREAMER/DREAMING'), (1, '-----'), (2, 'SHELL: DREAMSH')]
+    assert o.term.lines[-8] == 'HOST: INSIDE THE MODEL'
     assert o.term.lines[-1] == 'NOTHING HERE IS REAL. KEEP PLAYING.'
     assert 'term_error' in command(o, 'NEOFETCH BAD')['events']
     o.term.lines = []
