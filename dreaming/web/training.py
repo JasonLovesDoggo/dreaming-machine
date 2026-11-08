@@ -160,8 +160,8 @@ class _Parsed:
 def _thin(n, points):
     if n <= points:
         return range(n)
-    step = n / points
-    return sorted({int(i * step) for i in range(points)} | {n - 1})
+    step = (n - 1) / (points - 1)
+    return sorted({round(i * step) for i in range(points)})
 
 
 def _latest_per_it(rows):

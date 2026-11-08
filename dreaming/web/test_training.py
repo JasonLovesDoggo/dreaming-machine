@@ -115,7 +115,7 @@ class TrainingMetricsTest(unittest.TestCase):
     def test_points_and_bytes_are_bounded(self):
         self.write('run', [train_row(i * 25) for i in range(1, 301)])
         d = self.metrics('run', points=50)
-        self.assertLessEqual(len(d['train']['it']), 51)
+        self.assertEqual(len(d['train']['it']), 50)
         self.assertEqual((d['train']['it'][0], d['train']['it'][-1], d['train']['rows']), (25, 7500, 300))
         self.assertEqual(self.client.get('/training/metrics', params=dict(run='run', points=10 ** 6)).status_code, 422)
         with patch.object(training, 'MAX_BYTES', 4096):
