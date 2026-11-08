@@ -860,7 +860,7 @@ class MicroOS:
         f.append(int(self.drag is not None))
         f.append(self.btn)
         f.append(min(self.t - self.last_press_t, 9))
-        f.append(min(self.desk_sel + 1, 7))
+        f.append(self.desk_sel + 1)
         f += [PATHS.index(self.ex_path) if self.ex_path in PATHS else 0, self.ex_sel + 1, len(self.fs[self.ex_path]), len(self.fs['TRASH'])]
         f += [self.pt_color, int(self.pt_file is not None), int(self.pt_drawing)]
         sk = 0 if self.c_sel is None else (1 if self.c_sel[0] == 'waste' else 2)

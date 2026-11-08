@@ -1,5 +1,5 @@
 """Terminal integration and interpreter regression checks."""
-from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB, text_ids
+from .os_sim import MicroOS, APP_SLOTS, DESK_ICONS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB, text_ids
 from .tiles import ATLAS, BLUE, CHARSET, NEO_LOGO, VOCAB
 
 
@@ -96,6 +96,19 @@ def test_stars():
     assert o.term.lines[-1] == 'OK'
 
 
+def test_desktop_selection_unique():
+    o = MicroOS(0)
+    field = 3 * len(APP_SLOTS) + 4
+    values = []
+    for selection in range(-1, len(DESK_ICONS)):
+        o.desk_sel = selection
+        value = int(o.state_vector()[field])
+        assert value == selection + 1
+        assert value < STATE_VOCAB[field]
+        values.append(value)
+    assert len(set(values)) == len(DESK_ICONS) + 1
+
+
 def test_neofetch():
     o = MicroOS(42)
     o.open_app('terminal')
@@ -144,5 +157,6 @@ if __name__ == '__main__':
     test_shell_files()
     test_basic()
     test_stars()
+    test_desktop_selection_unique()
     test_neofetch()
     print('terminal regression checks passed')
