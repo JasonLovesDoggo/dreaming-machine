@@ -253,7 +253,7 @@ class MicroOS:
             self.calc.tick()
         if self.focus == 'flight':
             fk = {1: 'UP', 2: 'DOWN', 3: 'LEFT', 4: 'RIGHT', 6: 'ENTER'}.get(key, '')
-            if key >= KEY_CHAR0:
+            if KEY_CHAR0 <= key < KEY_CHAR0 + NCH:
                 fk = CHARSET[key - KEY_CHAR0]
             events += self.flight.step(fk)
         if 'paint' in self.z and self.pt_load < 10:
@@ -930,7 +930,6 @@ class MicroOS:
 # desk_sel (5th field after the app slots) has room for 15 desktop icons
 STATE_VOCAB = [2, 32, 24] * len(APP_SLOTS) + [len(APP_SLOTS) + 1, 2, 2, 10, 16, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
                                  2, 8, 11, 16, 12, 16, 11, 11, 10] + [EXT_VOCAB] * EXT_FIELDS
-STATE_VOCAB[FOCUS_COL + 4] = len(DESK_ICONS) + 1
 
 
 @lru_cache(maxsize=65536)

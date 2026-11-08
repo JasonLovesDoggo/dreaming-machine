@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from .apps import flight as fl
 from .apps.flight.render import render_scene, match_tile, ART
-from .os_sim import MicroOS, obs_to_pixels, STATE_VOCAB
+from .os_sim import MicroOS, obs_to_pixels, STATE_VOCAB, KEY_PLUS
 from .tiles import VOCAB, ATLAS, grid_to_pixels
 from .model import WorldModel, Config, compute_loss, decode
 from .dataset import OBS_KEYS
@@ -32,6 +32,7 @@ def test_flight_tiles_and_existing_model():
     assert np.all(tiles < VOCAB)
     assert obs_to_pixels(obs).shape == (192, 256)
     assert np.all(obs['state'] < STATE_VOCAB)
+    s.step((0, 0, 0, KEY_PLUS))
     c, r = s.pos['flight']
     assert np.array_equal(obs['grid'][r+1:r+20, c+1:c+29], tiles)
     torch.set_num_threads(1)
