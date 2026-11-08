@@ -1,11 +1,15 @@
 """The play page's websocket: the real simulator and the world model stepped in lockstep.
 
 Each server message is [n_frames:u8][has_ids:u8] + n_frames * 256x192 palette bytes
-(+ n_frames * 768 little-endian u16 tile ids when the client asked for them)."""
+(+ n_frames * 768 little-endian u16 tile ids when the client asked for them).
+With a truthy `z` request, this payload is zlib-compressed at level 1 and prefixed
+with a single 0xFF marker byte; otherwise the original format is unchanged."""
+import asyncio
 import json
 import logging
 import random
 import time
+import zlib
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..os_sim import MicroOS, obs_to_pixels
@@ -66,20 +70,28 @@ def encode(screens, with_ids):
     return b''.join(parts)
 
 
+def step_message(session, msg):
+    session.command(msg.get('cmd'), msg.get('ckpt'))
+    action = tuple(int(msg[k]) for k in ('x', 'y', 'btn', 'key'))
+    started = time.perf_counter()
+    screens = session.step(action, float(msg.get('temp', 0.0)))
+    latency_ms = (time.perf_counter() - started) * 1000
+    payload = encode(screens, bool(msg.get('ids')))
+    if msg.get('z'):
+        payload = b'\xff' + zlib.compress(payload, 1)
+    return payload, dict(latency_ms=latency_ms, app=session.real.focus, checkpoint=session.checkpoint)
+
+
 @router.websocket('/ws')
 async def play_socket(sock: WebSocket):
     await sock.accept()
-    session = Session()
+    session = await asyncio.to_thread(Session)
     try:
         while True:
             msg = json.loads(await sock.receive_text())
-            session.command(msg.get('cmd'), msg.get('ckpt'))
-            action = tuple(int(msg[k]) for k in ('x', 'y', 'btn', 'key'))
-            started = time.perf_counter()
-            screens = session.step(action, float(msg.get('temp', 0.0)))
-            latency_ms = (time.perf_counter() - started) * 1000
-            await sock.send_bytes(encode(screens, bool(msg.get('ids'))))
+            payload, telemetry = await asyncio.to_thread(step_message, session, msg)
+            await sock.send_bytes(payload)
             if msg.get('telemetry'):
-                await sock.send_json(dict(latency_ms=latency_ms, app=session.real.focus, checkpoint=session.checkpoint))
+                await sock.send_json(telemetry)
     except WebSocketDisconnect:
         pass
