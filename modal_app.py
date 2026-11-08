@@ -1,8 +1,9 @@
 """Modal entrypoints.
   modal run modal_app.py::gen_data --total-steps 20000000
-  modal run modal_app.py::train            # 5 nodes x 8 H100, resumes runs/main, trains one 10k chunk
+  modal run modal_app.py::train            # 2 nodes x 8 B300, resumes runs/main, trains one 10k chunk
   modal run modal_app.py::gen_data --mode doom --total-steps 4000000 --seed-offset 2000   # specials
   modal run modal_app.py::fetch   (download latest checkpoint + rollout pngs to ./runs/modal)
+  modal run modal_app.py::regen_all --wipe   # delete every shard, regenerate mixed + all specials
 """
 import modal
 import modal.experimental
@@ -35,6 +36,36 @@ def gen_data(total_steps: int = 20_000_000, containers: int = 20, seed_offset: i
         print('done seed', s)
 
 
+SPECIALS = {'doom': 4_000_000, 'cards': 4_000_000, 'windows': 4_000_000,
+            'calculator': 2_000_000, 'terminal': 2_000_000}
+
+
+@app.function(image=image, volumes={'/vol': vol}, timeout=1800)
+def wipe_shards():
+    import shutil, os
+    for d in (DATA, '/vol/shards_llm'):
+        if os.path.isdir(d):
+            n = len(os.listdir(d))
+            shutil.rmtree(d)
+            print('deleted', d, n, 'files')
+    os.makedirs(DATA)
+    vol.commit()
+
+
+@app.local_entrypoint()
+def regen_all(wipe: bool = False, mixed_steps: int = 40_000_000, containers: int = 40):
+    """Regenerate all scripted data on the current atlas. Terra (shards_llm) is regenerated separately."""
+    if wipe:
+        wipe_shards.remote()
+    jobs = [('mixed', mixed_steps, 1000)] + [(m, n, 2000 + 100 * i) for i, (m, n) in enumerate(SPECIALS.items())]
+    seeds, steps, modes = [], [], []
+    for mode, total, off in jobs:
+        k = containers if mode == 'mixed' else max(1, total // 1_000_000)
+        seeds += list(range(off, off + k)); steps += [total // k] * k; modes += [mode] * k
+    for s in gen_shards.map(seeds, steps, modes):
+        print('done seed', s)
+
+
 def _train(args: str, gpus: int, dist_args=(), commit=True):
     import subprocess, shlex
     cmd = ['torchrun', f'--nproc_per_node={gpus}', *dist_args, '-m', 'dreaming.train', '--data', DATA] + shlex.split(args)
@@ -54,15 +85,15 @@ def _train(args: str, gpus: int, dist_args=(), commit=True):
     return p.returncode
 
 
-@app.function(image=image, volumes={'/vol': vol}, gpu='H100:8', memory=262144, cpu=32, timeout=24 * 3600)
+@app.function(image=image, volumes={'/vol': vol}, gpu='B300:8', memory=262144, cpu=32, timeout=24 * 3600)
 def train8(args: str):
     return _train(args, 8)
 
 
-NODES = 5
+NODES = 2
 
 
-@app.function(image=image, volumes={'/vol': vol}, gpu='H100:8', memory=262144, cpu=32, timeout=24 * 3600)
+@app.function(image=image, volumes={'/vol': vol}, gpu='B300:8', memory=262144, cpu=32, timeout=24 * 3600)
 @modal.clustered(size=NODES, rdma=True)
 def train_cluster(args: str):
     import os
@@ -75,23 +106,23 @@ def train_cluster(args: str):
     return _train(args, 8, dist, commit=info.rank == 0)
 
 
-@app.function(image=image, volumes={'/vol': vol}, gpu='H100:5', memory=196608, cpu=20, timeout=24 * 3600)
-def train5(args: str):
-    return _train(args, 5)
+@app.function(image=image, volumes={'/vol': vol}, gpu='B300:4', memory=196608, cpu=20, timeout=24 * 3600)
+def train4(args: str):
+    return _train(args, 4)
 
 
-@app.function(image=image, volumes={'/vol': vol}, gpu='H100', memory=131072, cpu=8, timeout=24 * 3600)
+@app.function(image=image, volumes={'/vol': vol}, gpu='B300', memory=131072, cpu=8, timeout=24 * 3600)
 def train1(args: str):
     return _train(args, 1)
 
 
 @app.local_entrypoint()
-def train(gpus: int = 40, iters: int = 150000, chunk: int = 10000, batch: int = 32, unroll: int = 6, run: str = 'main', extra: str = ''):
+def train(gpus: int = 16, iters: int = 150000, chunk: int = 10000, batch: int = 32, unroll: int = 6, run: str = 'main', extra: str = ''):
     args = f'--out {RUNS}/{run} --iters {iters} --chunk {chunk} --batch {batch} --unroll {unroll} --compile --resume auto {extra}'
     if gpus == 8 * NODES:
         print('exit', train_cluster.remote(args))
         return
-    fn = {8: train8, 5: train5, 1: train1}[gpus]
+    fn = {8: train8, 4: train4, 1: train1}[gpus]
     print('exit', fn.remote(args))
 
 
