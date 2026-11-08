@@ -9,7 +9,7 @@ import threading
 import time
 from collections import Counter
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix='/telemetry')
@@ -25,6 +25,16 @@ _writer = secrets.token_hex(8)
 def configure_modal(volume):
     global _volume
     _volume = volume
+    return refresh_modal
+
+
+def refresh_modal():
+    global _dirty
+    with _lock:
+        if _dirty:
+            _volume.commit()
+            _dirty = False
+        _volume.reload()
 
 
 class Event(BaseModel):
@@ -83,18 +93,20 @@ def write(event, client=None, user_agent=''):
             if not _started and _volume is not None:
                 _started = True
                 threading.Thread(target=_committer, daemon=True).start()
+        return True
     except Exception:
         log.exception('telemetry write failed')
+        return False
 
 
 @router.post('/events', status_code=202)
 def ingest(event: Event, request: Request):
-    write(event, request.client, request.headers.get('user-agent', ''))
+    if not write(event, request.client, request.headers.get('user-agent', '')):
+        raise HTTPException(status_code=503, detail='Telemetry storage unavailable')
     return {'ok': True}
 
 
-@router.get('/summary')
-def summary():
+def _summary():
     visitors, sessions, pages = set(), {}, Counter()
     apps, actions, checkpoints = Counter(), Counter(), Counter()
     metrics = {'fps': [], 'latency_ms': []}
@@ -124,3 +136,9 @@ def summary():
                 apps=dict(apps.most_common()), actions=dict(actions.most_common()), checkpoints=checkpoints,
                 **{k: dict(count=len(v), avg=sum(v) / len(v) if v else None,
                            min=min(v) if v else None, max=max(v) if v else None) for k, v in metrics.items()})
+
+
+@router.get('/summary')
+def summary():
+    with _lock:
+        return _summary()
