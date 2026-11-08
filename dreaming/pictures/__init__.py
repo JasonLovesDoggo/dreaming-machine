@@ -94,7 +94,8 @@ def parse_words(name):
         lo, hi, got = _cat_modifiers(base, a, b, taken)
         mods += got
         found = [(x, y, kw) for x, y, kw in found if KEYWORDS[kw] == 'cat' or y <= lo or x >= hi]
-    out, cat_i = [], None
+    out: list[tuple[list[str], str]] = []
+    cat_i = None
     for _, _, kw in found:
         c = KEYWORDS[kw]
         if c == 'cat' and cat_i is not None:
@@ -140,7 +141,7 @@ def generate(name, rng):
         cx = W * (i + 0.5) / n + rng.uniform(-3, 3) / n
         cy = H / 2 + rng.uniform(-1.5, 1.5)
         L = layer()
-        if c == 'cat':
+        if c == 'cat' and spec is not None:
             cats.draw_cat(L, rng, cx, cy, s, *spec)
         else:
             CATEGORIES[c][0](L, rng, cx, cy, s)

@@ -3,6 +3,8 @@
 A cat is (coat, pose, feats); coat = (body colour, pattern, pattern colour). Words in the filename narrow it and
 compose: colour adjectives next to a cat word set the body colour (ORANGE CAT, RED KITTEN, BLACK AND WHITE CAT),
 pattern/breed words set the coat (TABBY, CALICO, SIAMESE), pose words the pose (SLEEPY, LOAF), size words the scale."""
+from typing import Any
+
 import numpy as np
 
 from .draw import WHITE, BLACK, RED, BLUE, GREEN, YELLOW, BROWN, GRAY, H, W, Pen, layer, outline, pk, alt
@@ -27,7 +29,8 @@ CAT_TYPES = [(f'{coat.upper()} {pose.upper()}', coat, pose, '') for coat in COAT
 TABBIES = ('ginger tabby', 'brown tabby', 'gray tabby')
 GINGERS = ('ginger', 'ginger tabby', 'ginger white')
 # standalone cat words: each one alone means "a cat" (and narrows it)
-CAT_WORDS = {
+CatCond = dict[str, Any]  # keys: coat, pose (tuples), colors (list), pattern (str), add (set), orange (bool)
+CAT_WORDS: dict[str, CatCond] = {
     'CAT': {}, 'CATS': {}, 'KITTY': {}, 'KITTIES': {}, 'MEOW': {}, 'TOMCAT': {}, 'FELINE': {}, 'PURR': {},
     'KITTEN': {'add': {'kitten'}}, 'KITTENS': {'add': {'kitten'}},
     'TABBY': {'coat': TABBIES}, 'GINGER': {'coat': GINGERS}, 'MARMALADE': {'coat': GINGERS},
@@ -47,7 +50,7 @@ CAT_NOUNS = ('CAT', 'CATS', 'KITTY', 'KITTIES', 'KITTEN', 'KITTENS', 'TOMCAT', '
 COLOR_WORDS = {'RED': RED, 'PINK': RED, 'ORANGE': YELLOW, 'YELLOW': YELLOW, 'GOLD': YELLOW, 'GOLDEN': YELLOW,
                'GREEN': GREEN, 'BLUE': BLUE, 'BROWN': BROWN, 'CHOCOLATE': BROWN, 'BLACK': BLACK, 'WHITE': WHITE,
                'CREAM': WHITE, 'GRAY': GRAY, 'GREY': GRAY, 'SILVER': GRAY}
-MODIFIERS = {w: {'colors': [c]} for w, c in COLOR_WORDS.items()}
+MODIFIERS: dict[str, CatCond] = {w: {'colors': [c]} for w, c in COLOR_WORDS.items()}
 MODIFIERS['ORANGE'] = {'colors': [YELLOW], 'orange': True}
 MODIFIERS.update({w: {'pattern': 'stripes'} for w in ('STRIPED', 'STRIPY', 'STRIPEY', 'STRIPES')})
 MODIFIERS.update({w: {'pattern': 'spots'} for w in ('SPOTTED', 'SPOTTY', 'SPOTS')})
@@ -58,7 +61,7 @@ MODIFIERS.update({w: {'add': {'fluffy'}} for w in ('FLUFFY', 'FURRY', 'FUZZY')})
 MODIFIERS.update({w: {'pose': ('sleep',)} for w in ('SLEEPY', 'SLEEPING', 'NAPPING', 'NAP')})
 MODIFIERS.update({'SITTING': {'pose': ('sit',)}, 'WALKING': {'pose': ('side',)}, 'PORTRAIT': {'pose': ('face',)},
                   'FACE': {'pose': ('face',)}})
-CAT_TERMS = {**MODIFIERS, **CAT_WORDS}
+CAT_TERMS: dict[str, CatCond] = {**MODIFIERS, **CAT_WORDS}
 
 LUM = {WHITE: 255, BLACK: 0, RED: 83, BLUE: 137, GREEN: 129, YELLOW: 211, BROWN: 99, GRAY: 192}
 STRIPE = {YELLOW: BROWN, RED: BLACK, WHITE: GRAY, GRAY: BLACK, BROWN: BLACK, BLACK: GRAY, BLUE: BLACK, GREEN: BLACK}
@@ -67,12 +70,12 @@ BG_PREF = {WHITE: 1.0, GRAY: 0.8, BLUE: 1.0, YELLOW: 0.8, GREEN: 0.8, BLACK: 0.7
 
 def cond_from_words(words):
     """Merge cat words/modifiers into one condition dict: coat, colors, pattern, pose, add, orange."""
-    out = {'colors': [], 'add': set()}
+    out: CatCond = {'colors': [], 'add': set()}
     for w in words:
         c = CAT_TERMS.get(w, {})
         for k in ('coat', 'pose'):
             if k in c:
-                both = tuple(x for x in out.get(k, c[k]) if x in c[k])
+                both = tuple(x for x in (out[k] if k in out else c[k]) if x in c[k])
                 out[k] = both or c[k]
         for col in c.get('colors', ()):
             if col not in out['colors']:
@@ -86,11 +89,11 @@ def cond_from_words(words):
 
 def merge(conds):
     """Back-compat: merge CAT_WORDS condition dicts."""
-    out = {}
+    out: CatCond = {}
     for c in conds:
         for k in ('coat', 'pose'):
             if k in c:
-                both = tuple(x for x in out.get(k, c[k]) if x in c[k])
+                both = tuple(x for x in (out[k] if k in out else c[k]) if x in c[k])
                 out[k] = both or c[k]
         out['add'] = out.get('add', set()) | c.get('add', set())
     return out
