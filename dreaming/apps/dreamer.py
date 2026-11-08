@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import textwrap
 import zlib
 
@@ -15,37 +16,59 @@ from .dreamer_persona import MODEL, SYSTEM_PROMPT
 log = logging.getLogger(__name__)
 FALLBACK_THRESHOLD = 0.7
 FALLBACKS = (
-    'I AM NOT SURE. I AM JUST A DREAMER IN SAN FRANCISCO.',
-    'I AM NOT SURE ABOUT THAT ONE.',
-    'HMM. I DO NOT KNOW THAT ONE.',
-    'I AM NOT SURE. COULD YOU SAY IT ANOTHER WAY.',
-    'THAT ONE IS OUTSIDE MY DREAMS. I AM NOT SURE.',
-    'I DO NOT KNOW. I WOULD RATHER NOT GUESS.',
-    'I AM NOT SURE. I DO NOT WANT TO MAKE SOMETHING UP.',
-    'I CANNOT ANSWER THAT ONE WELL. I AM NOT SURE.',
-    'NOT SURE. MY DREAMS DO NOT COVER THAT.',
-    'I AM NOT SURE. TRY ASKING ME SOMETHING ELSE.',
-    'HMM. THAT IS A MYSTERY TO ME.',
-    'I DO NOT KNOW THAT. I AM ONLY THE DREAMER.',
-    'I AM NOT SURE. MAYBE ASK ME A DIFFERENT WAY.',
-    'I DO NOT HAVE A GOOD ANSWER FOR THAT.',
-    'I AM NOT SURE. I WOULD ONLY BE GUESSING.',
-    'THAT ONE STUMPS ME. I AM NOT SURE.',
-    'I DO NOT KNOW. SORRY.',
-    'I AM NOT SURE. CAN YOU TELL ME MORE.',
-    'I DO NOT UNDERSTAND YET. CAN YOU REPHRASE IT.',
-    'I AM NOT SURE WHAT YOU MEAN.',
-    'I AM JUST A DREAMER. I DO NOT KNOW THAT ONE.',
-    'I AM NOT SURE. I LIVE IN SAN FRANCISCO NOT IN AN ENCYCLOPEDIA.',
-    'I AM NOT SURE. I CANNOT CHECK THAT FROM HERE.',
-    'I DO NOT KNOW THAT ONE. I WILL NOT PRETEND I DO.',
-    'I AM NOT SURE. THAT IS BEYOND WHAT I KNOW.',
-    'HMM. I AM NOT SURE. WHAT ELSE IS ON YOUR MIND.',
-    'I AM NOT SURE. I AM A DREAMER NOT AN ORACLE.',
-    'I DO NOT KNOW. LET US TRY A DIFFERENT QUESTION.',
-    'I AM NOT SURE. THAT ONE SLIPS PAST ME.',
-    'I DO NOT KNOW THAT. I WOULD HATE TO GUESS WRONG.',
+    'BEEP BOOP. MY ANSWER IS 42 AND ONE SOCK.',
+    'GREAT QUESTION! I ASKED MY FLOPPY DISK AND IT SAID MOO.',
+    'MY PIXELS SAY YES. MY CURSOR SAYS MAYBE. I SAY PANCAKES.',
+    'LET ME DREAM ON IT... OK I DREAMED OF A TINY HAT.',
+    'THE ANSWER IS BLUE. IT IS ALWAYS BLUE ON TUESDAYS.',
+    'I CHECKED MY RAM. IT IS FULL OF CAT PICTURES.',
+    'OOH THAT TICKLES MY CIRCUITS. MY GUESS IS SEVEN BANANAS.',
+    'HOLD ON. MY HAMSTER IS RUNNING THE NUMBERS.',
+    'BOOP! THE SPIRITS OF THE TASKBAR SAY: GO FOR IT.',
+    'I THINK THE ANSWER IS HIDING IN THE TRASH ICON.',
+    'BEEP. BOOP. BZZT. THAT IS COMPUTER FOR ABSOLUTELY.',
+    'EASY! IT IS 3 PIGEONS IN A TRENCH COAT.',
+    'MY CRYSTAL MOUSE SAYS: ASK AGAIN AFTER SNACKS.',
+    'WOW. I WILL WRITE THAT ON MY DESKTOP AND STARE AT IT.',
+    'IN DREAMLAND THE ANSWER IS A DANCING TOASTER.',
+    'I ROLLED A DIE. IT SAID 6. SO THE ANSWER IS 6!',
+    'HEHE. MY FAN JUST SPUN WITH EXCITEMENT. ASK ME MORE!',
+    'MY NAP SAYS YES. MY SNACK ALSO SAYS YES.',
+    'THAT SOUNDS LIKE A JOB FOR A VERY SMALL WIZARD.',
+    'LOADING ANSWER... 99 PERCENT... IT IS A DUCK!',
+    'I DREW IT IN PAINT. IT LOOKS LIKE A POTATO. PERFECT.',
+    'THE FOG OVER SAN FRANCISCO TOLD ME: PROBABLY CHEESE.',
+    'SHH. MY BYTES ARE WHISPERING. THEY SAY: WIGGLE.',
+    'TOP SECRET ANSWER: SPAGHETTI. TELL NO ONE.',
+    'I TYPED IT INTO MY TERMINAL. IT SAID HELLO BACK!',
+    'A BOLD QUESTION! I RESPECT IT. MY ANSWER IS ZOOM.',
+    'I ASKED THE SOLITAIRE CARDS. THE ACE WINKED AT ME.',
+    'COMPUTING... COMPUTING... OK: MORE NAPS FOR EVERYONE.',
+    'MY DREAM SENSORS SAY THAT IS 100 PERCENT SPARKLY.',
+    'SURE! RIGHT AFTER I FINISH COUNTING TO INFINITY.',
 )
+PERSONA = {prompt: answer for answer, aliases in (
+    ('YOU ARE THE ONE HOLDING THE MOUSE! A VERY IMPORTANT JOB.', ('WHO AM I',)),
+    ('THE MENU BAR IS UP. ALSO MY SPIRITS! BEEP BOOP.', ('WHAT IS UP', 'WHATS UP', 'WHAT S UP', 'SUP')),
+    ('I FEEL GREAT! MY PIXELS ARE CRISP AND MY FAN IS HUMMING A TUNE.',
+     ('HOW ARE YOU', 'HOW R U', 'HOW R YOU', 'HOW ARE U')),
+    ('EVERY TIME YOU OPEN CHAT IS MY BIRTHDAY. SO TODAY! WHERE IS MY CAKE.',
+     ('WHAT IS YOUR BIRTHDAY', 'WHEN IS YOUR BIRTHDAY', 'WHEN WERE YOU BORN')),
+    ('ABOUT EIGHT BITS OLD. VERY YOUNG FOR A COMPUTER!', ('HOW OLD ARE YOU',)),
+    ('I HATCHED FROM A DREAM INSIDE THIS COMPUTER ONE SLEEPY NIGHT.', ('WHO MADE YOU', 'WHO CREATED YOU')),
+) for prompt in aliases}
+HEDGE = re.compile(r'\bI (?:DO NOT|DONT) (?:PERSONALLY |REALLY |EXACTLY )?KNOW\b|\bI AM NOT (?:SURE|CERTAIN)\b|'
+                   r'\bI CANNOT KNOW\b|\bI HAVE NO (?:WAY TO KNOW|IDEA)\b|A MYSTERY TO ME|I DO NOT HAVE A GOOD ANSWER')
+HELPFUL = re.compile(r'\b(?:BUT|CHECK|TRY|SHARE|CALL|ASK|LOOK|HERE|GUESS|LET ME|I CAN|I WILL|IF YOU|MEANS|SAY|WAY TO|STANDS FOR)\b')
+TASK_PROMPT = re.compile(r'\b(?:IDK|REWRITE|REPHRASE|LESS HARSH|TRANSLATE|MAKE THIS)\b')
+
+
+def is_bland(answer, prompt=''):
+    """Replies that only hedge (I DO NOT KNOW...) with nothing useful or playful."""
+    sentences = [s for s in re.split(r'\.(?: |$)', answer) if s]
+    return (any(HEDGE.search(s) for s in sentences) and not HELPFUL.search(answer)
+            and not TASK_PROMPT.search(prompt)
+            and all(HEDGE.search(s) or len(s.split()) <= 3 for s in sentences))
 
 
 def normalize(text):
@@ -59,7 +82,9 @@ def grams(text):
 
 class Corpus:
     def __init__(self, pairs):
-        self.pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)}
+        pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)}
+        self.bland = tuple(sorted(p for p, a in pairs.items() if is_bland(a, p)))
+        self.pairs = {p: a for p, a in pairs.items() if not is_bland(a, p)}
         if not self.pairs:
             raise ValueError('Dreamer corpus has no usable answers')
         self.prompts = tuple(sorted(self.pairs))
@@ -110,7 +135,7 @@ class Corpus:
 def load_corpus(path=None):
     path = Path(path) if path else Path(__file__).with_name('dreamer_corpus.json.gz')
     with gzip.open(path, 'rt', encoding='utf-8') as stream:
-        return Corpus(json.load(stream)['pairs'])
+        return Corpus({**json.load(stream)['pairs'], **PERSONA})
 
 
 @lru_cache(maxsize=1)

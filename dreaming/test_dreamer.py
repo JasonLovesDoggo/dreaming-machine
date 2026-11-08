@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from .apps.dreamer import FALLBACKS, Corpus, Chat, corpus, load_corpus, normalize, reply
+from .apps.dreamer import FALLBACKS, PERSONA, Corpus, is_bland, prompts, Chat, corpus, load_corpus, normalize, reply
 from .apps import dreamer
 from .apps.dreamer_persona import MODEL, SYSTEM_PROMPT
 from .dataset import run_episode
@@ -265,3 +265,35 @@ def test_app_is_named_chat():
     from .os_sim import APP_TITLES, DESK_ICONS
     assert APP_TITLES['dreamer'] == 'CHAT'
     assert ('dreamer', 'CHAT', ('dreamer', None)) in DESK_ICONS
+
+
+def test_bland_replies_filtered_and_persona_answers():
+    with gzip.open(Path(dreamer.__file__).with_name('dreamer_corpus.json.gz'), 'rt') as stream:
+        raw = {normalize(p): normalize(a) for p, a in json.load(stream)['pairs'].items()}
+    active = corpus()
+    assert 80 <= len(active.bland) <= 200
+    assert all(is_bland(raw[p], p) and p not in active.pairs for p in active.bland if p not in PERSONA)
+    assert not any(is_bland(a, p) for p, a in active.pairs.items())
+    assert not any(is_bland(f) for f in FALLBACKS)
+    assert not set(active.bland) - set(PERSONA) & set(prompts())
+    assert set(PERSONA) <= set(prompts())
+    for prompt in ('WHO AM I', 'WHAT IS UP', 'HOW ARE YOU', 'WHAT IS YOUR BIRTHDAY', 'how are u?', 'WHO MADE YOU'):
+        assert {reply(prompt, seed) for seed in range(5)} == {PERSONA[normalize(prompt)]}
+    for prompt in ('WHAT DOES IDK STAND FOR', 'CAN YOU MAKE THIS LESS HARSH: YOUR IDEA WON T WORK.',
+                   'DO YOU KNOW WHAT HAPPENED IN MY TOWN YESTERDAY', 'DO PENGUINS HAVE KNEES'):
+        assert reply(prompt, 3) == raw[prompt]
+    for prompt in ('WHAT COLOR IS THE SHIRT I M WEARING', 'Q7 ZZ 9KX'):
+        assert reply(prompt, 3) in FALLBACKS and reply(prompt, 3) == reply(prompt, 3)
+    assert Corpus({'WHO RUNS FLINT': 'I DO NOT KNOW WHO RUNS FLINT.', 'HI': 'HI!'}).bland == ('WHO RUNS FLINT',)
+
+
+def test_persona_reply_streams():
+    chat = Chat()
+    chat.input = 'WHO AM I'
+    assert chat.send(0, 0)
+    chat.tick()
+    assert chat.messages[-1] == ('dreamer', PERSONA['WHO AM I'][:3])
+    while chat.pending:
+        chat.tick()
+    assert chat.messages[-2:] == [('body', 'WHO AM I'), ('dreamer', PERSONA['WHO AM I'])]
+    assert all(len(line) <= 44 for _, line in chat.lines())
