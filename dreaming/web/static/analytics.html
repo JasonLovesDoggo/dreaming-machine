@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dreaming Computer: analytics</title>
+  <link rel="stylesheet" href="static/style.css">
+  <style>
+    .analytics .intro { max-width: 850px; color: var(--muted); }
+    .analytics .rankings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .analytics .rank-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px; }
+    .analytics .rank-row { margin: 14px 0; }
+    .analytics .rank-label { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 5px; }
+    .analytics .rank-name { overflow-wrap: anywhere; }
+    .analytics .rank-count { white-space: nowrap; color: var(--accent); }
+    .analytics .track { height: 4px; background: var(--line); border-radius: 3px; overflow: hidden; }
+    .analytics .fill { height: 100%; background: var(--accent); }
+    .analytics .value { color: var(--accent); }
+    .analytics button:focus-visible, .analytics a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .analytics [hidden] { display: none; }
+    @media (max-width: 700px) { body.analytics { padding: 18px; } .analytics .rankings { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body class="tp analytics">
+  <header class="tp-head"><h1>Dreaming Computer <span>/ web analytics</span></h1><span class="hint">Aggregate only · all time</span></header>
+  <p class="intro">A live view of anonymous browser activity since telemetry began. No individual browsing records are shown.</p>
+  <div class="toolbar"><span id="auto-status">Auto-refresh · every 15s</span><span class="spacer"></span><span id="updated" class="hint">Not yet updated</span><button id="refresh" class="primary">Refresh now</button></div>
+  <p id="status" role="status" aria-live="polite">Loading analytics…</p>
+  <p id="empty" class="notice" hidden>No sessions recorded yet. Activity will appear here as clients report telemetry.</p>
+  <section aria-label="Overview"><div id="kpis" class="tiles"></div></section>
+  <p class="note">Visitors = distinct anonymous browser IDs. Session duration = max reported duration per session and page, summed across pages; average divides by sessions.</p>
+  <div class="rankings">
+    <section class="rank-panel"><h2>Page views by page</h2><p class="hint">Reported pageview events · top 10</p><div id="pages"></div></section>
+    <section class="rank-panel"><h2>App usage</h2><p class="hint">Counted interactions reported by clients · top 10</p><div id="apps"></div></section>
+    <section class="rank-panel"><h2>Action usage</h2><p class="hint">Counted interactions reported by clients · top 10</p><div id="actions"></div></section>
+    <section class="rank-panel"><h2>Checkpoint usage</h2><p class="hint">Telemetry events, not unique users · top 10</p><div id="checkpoints"></div></section>
+  </div>
+  <section><div class="panel-head"><h2>Client performance</h2><span class="hint">Client-reported samples, not server benchmarks</span></div><div id="performance" class="tiles"></div></section>
+  <footer><a href=".">play the computer</a> &middot; <a href="training">training metrics</a> &middot; <a href="data">training data viewer</a> &middot; <a href="sprites">tile &amp; sprite atlas</a></footer>
+  <script src="static/analytics_core.js"></script>
+  <script src="static/analytics.js"></script>
+</body>
+</html>
