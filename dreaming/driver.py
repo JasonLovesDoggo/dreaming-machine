@@ -5,7 +5,7 @@ from collections import Counter
 from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, DCLICK_STEPS, KEY_UP, KEY_DOWN,
                      KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
 from .tiles import CHAR_IDX
-from .pictures import KEYWORDS, IMAGE_EXTS
+from .pictures import IMAGE_EXTS, CATEGORY_WORDS, CAT_WORDS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
 from .apps import calculator as calc
@@ -22,6 +22,8 @@ TASK_EVENTS = {
     'noise': ['desk_select'],
     'chaos': [],
 }
+SUBJECT_KEYS = sorted(k for k in CATEGORY_WORDS if k != 'cat')
+CAT_BASE_WORDS = ['CAT', 'CAT', 'KITTY', 'KITTEN', 'CATS']
 UNKNOWN_WORDS = "IMG PHOTO TRIP MEME ART PIC SCAN WALLPAPER DOODLE BEST OLD THING STUFF".split()
 WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHIP IT NOW GPU MODEL TRAIN PLAY CARDS "
          "FILE SAVE NEW OK YES NO 123 2026 WIN NOTE MEETING AT 5:00 BUY MILK EGGS CALL MOM FIX BUG DEPLOY FRIDAY "
@@ -722,13 +724,19 @@ class Driver:
         if r.random() < (0.1 if deep else 0.35):
             yield from self.close('calculator')
 
+    def image_word(self):
+        """A subject keyword: ~30% cats (mostly plain CAT/KITTY so the concept dominates), else uniform over subjects."""
+        r = self.rng
+        if r.random() < 0.3:
+            return r.choice(CAT_BASE_WORDS) if r.random() < 0.55 else r.choice(CAT_WORDS)
+        return r.choice(CATEGORY_WORDS[r.choice(SUBJECT_KEYS)])
+
     def make_name(self):
         r = self.rng
-        kws = list(KEYWORDS)
         if r.random() < 0.08:
             words = [r.choice(UNKNOWN_WORDS)]
         else:
-            words = [r.choice(kws) for _ in range(1 if r.random() < 0.75 else 2)]
+            words = [self.image_word() for _ in range(1 if r.random() < 0.75 else 2)]
         name = (' ' if r.random() < 0.4 else '').join(words)
         if r.random() < 0.2:
             name = r.choice(['MY ', 'BIG ', 'TINY ', 'OLD ']) + name
