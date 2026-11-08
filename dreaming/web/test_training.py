@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -149,6 +150,27 @@ class TrainingMetricsTest(unittest.TestCase):
         second = self.client.get('/training/runs').json()['refresh']
         self.assertEqual((len(calls), second['started'], second['enabled']), (1, False, True))
         self.assertIn('open files', second['last_error'])
+
+    def test_volume_reload_never_overlaps_reads_and_responses_are_snapshots(self):
+        path = self.write('run_a', [train_row(25, source='historical_stdout'), eval_row(25)])
+        seen = []
+
+        def refresh():
+            t = threading.Thread(target=lambda: seen.append(training.STORE.lock.acquire(blocking=False)))
+            t.start()
+            t.join()
+        training.configure(self.root, refresh, refresh_ttl=3600)
+        self.client.get('/training/runs')
+        for _ in range(50):
+            if not training.STORE.refresher.running:
+                break
+            time.sleep(0.01)
+        self.assertEqual(seen, [False])
+        body = training._metrics(training.STORE.lookup('run_a'), training.STORE.parsed, 100)
+        state = training.STORE.parsed(path)
+        self.assertIsNot(body['notes'], state.notes)
+        self.assertIsNot(body['eval']['latest_rollouts'], state.curves)
+        self.assertEqual(body['eval']['latest_rollouts'], state.curves)
 
     def test_page_footer_and_vendored_chart_library(self):
         for page in ('play.html', 'data.html', 'atlas.html'):

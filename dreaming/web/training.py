@@ -4,6 +4,7 @@ Train rows: {"kind": "train", "it": 25, "loss": ..., "grid": ..., ...}; every ot
 field becomes a series. Eval rows: {"kind": "eval", "it": ..., "metrics": {app: dreaming.eval result}}.
 Only run directories directly under the configured root are read, and only their metrics.jsonl
 (never checkpoints). Files are parsed incrementally and bounded in bytes, rows and points."""
+import copy
 import json
 import logging
 import math
@@ -178,8 +179,9 @@ def _columns(rows, points):
 class Refresher:
     """Calls a volume reload in a background thread, at most once per ttl and only when the dashboard asks."""
 
-    def __init__(self, fn=None, ttl=REFRESH_TTL):
+    def __init__(self, fn=None, ttl=REFRESH_TTL, guard=None):
         self.fn, self.ttl, self.lock = fn, ttl, threading.Lock()
+        self.guard = guard or threading.Lock()
         self.running, self.last_attempt, self.last_ok, self.last_error, self.last_error_at = False, 0.0, None, None, None
         self.on_done = None
 
@@ -193,7 +195,8 @@ class Refresher:
 
     def _run(self):
         try:
-            self.fn()
+            with self.guard:
+                self.fn()
             self.last_ok, self.last_error = time.time(), None
         except Exception as e:
             self.last_error, self.last_error_at = f'{type(e).__name__}: {e}'[:300], time.time()
@@ -211,9 +214,11 @@ class Refresher:
 class Store:
     def __init__(self, root=None, refresh=None, refresh_ttl=REFRESH_TTL):
         self.root = root or os.environ.get('DREAMING_RUNS_DIR', './runs')
-        self.refresher = Refresher(refresh, refresh_ttl)
+        # Shared with the refresher: Modal refuses reload while a volume file is open and shows an empty
+        # mount mid-reload, so scans/reads and reloads must never overlap.
+        self.lock = threading.RLock()
+        self.refresher = Refresher(refresh, refresh_ttl, guard=self.lock)
         self.refresher.on_done = self.invalidate
-        self.lock = threading.Lock()
         self.scanned_at, self.scan, self.root_exists = 0.0, {}, False
         self.cache = OrderedDict()
 
@@ -325,15 +330,19 @@ def runs():
 
 @router.get('/metrics')
 def metrics(run: str = Query(max_length=128), points: int = Query(POINTS, ge=50, le=5000)):
-    info = STORE.lookup(run)
-    state = STORE.parsed(info['path'])
+    with STORE.lock:
+        return _metrics(STORE.lookup(run), STORE.parsed, points)
+
+
+def _metrics(info, parsed, points):
+    state = parsed(info['path'])
     evals = _latest_per_it(state.evals)
     apps = sorted({app for _, a in evals for app in a})
     return dict(
         id=info['id'], bytes=info['bytes'], mtime=info['mtime'], last_it=state.last_it,
         skipped_lines=state.skipped, nonfinite_values=state.nonfinite, restarts=state.restarts,
-        truncated=state.truncated, notes=state.notes,
+        truncated=state.truncated, notes=dict(state.notes),
         train=_columns(state.train, points),
         eval=dict(apps=apps, rows=len(evals), points={app: _columns([(it, a[app]) for it, a in evals if app in a], points)
                                                      for app in apps},
-                  latest_rollouts=state.curves))
+                  latest_rollouts=copy.deepcopy(state.curves)))
