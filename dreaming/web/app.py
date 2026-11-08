@@ -44,7 +44,8 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, ckpt_
                 ckpt_refresh()
             except Exception:
                 log.exception('could not refresh checkpoint volume')
+        names = CHECKPOINTS.names()
         return JSONResponse(dict(pal=PAL.tolist(), charset=CHARSET, extra_keys=EXTRA_KEYS, key_extra0=KEY_EXTRA0, sections=atlas.sections_json(),
-                                 ckpts=CHECKPOINTS.names(), current=CHECKPOINTS.current))
+                                 ckpts=names, current=CHECKPOINTS.default_name(names)))
 
     return app

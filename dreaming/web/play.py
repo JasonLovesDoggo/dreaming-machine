@@ -27,8 +27,10 @@ class Session:
     def __init__(self):
         self.real = MicroOS(_seed())
         self.obs = self.real.reset()
-        self.neural = CHECKPOINTS.session()
-        self.checkpoint = CHECKPOINTS.current if self.neural else None
+        self.checkpoint = CHECKPOINTS.current
+        self.neural = CHECKPOINTS.session(self.checkpoint) if self.checkpoint else None
+        if not self.neural:
+            self.checkpoint = None
         self.sync()
 
     def sync(self):
