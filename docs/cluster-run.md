@@ -110,6 +110,75 @@ settings, output identity, no concurrent writer, remaining budget and estimated
 time to the next checkpoint. CPU tests and read-only previews do not demonstrate
 actual distributed GPU execution; inspect RDMA/NCCL logs on the first real launch.
 
+## Picture-aware fork (operator launch only)
+
+First stop the old training app and wait for **every** source ledger allocation
+to have an `end`. The launcher refuses active or missing/empty source ledgers;
+do not fill in end timestamps manually. Choose a fresh target run id/volume.
+The source numbered checkpoint must exist and be at or before its run.json iter.
+The old output volume is mounted read-only at `/src`, and the independent picture
+volume is mounted read-only at `/pic`. Neither is written by the fork.
+
+```sh
+export DREAMING_RUN_ID=overnight_20261108_pic24k
+export DREAMING_SOURCE_RUN_ID=overnight_20261108_b30024
+export DREAMING_PICTURE_VOLUME=dreaming-picture-pilot-v1
+# Read-only SDK preview (no app launch/volume creation):
+python -c 'import cluster_run; cluster_run.launch(source_iter=24000, extra_shards=400, lr=0.0004, warmup=200, min_lr_frac=0.1, restart_iter=5000, iters=65000, batch=32, unroll=6, end_iter=65000, ckpt_every=1000, budget_hours=1, stop_at="2026-11-08T14:29:00Z", picture_data="/pic/train/part_00,/pic/train/part_01", picture_frac=.15, dry_run=True)'
+# This command allocates GPUs; execute only after reviewing the preview:
+modal run --detach cluster_run.py::launch --source-iter 24000 --extra-shards 400 --lr 0.0004 --warmup 200 --min-lr-frac 0.1 --restart-iter 5000 --iters 65000 --batch 32 --unroll 6 --ckpt-every 1000 --end-iter 65000 --budget-hours 1 --stop-at 2026-11-08T14:29:00Z --picture-data /pic/train/part_00,/pic/train/part_01 --picture-frac 0.15
+```
+
+Set an appropriate future UTC stop time and allocation budget: the source ledger
+is copied with `inherited_from` into the new ledger and counts against the same
+8-hour total cap. The deadline is the earlier of stop time and requested budget;
+less than 30 minutes remaining is refused (the 600-second cleanup reserve remains).
+This ledger check is not an atomic cross-app lock: operators must prevent racing
+launches/restarts of the source or multiple forks of it.
+
+The source `launch.json` is required. Every locked setting must match it except
+the checkpoint source path and picture data/fraction. Mismatches name the keys
+to correct; in particular, preserve `--extra-shards 400` rather than its default 40.
+
+This resumes iteration and optimizer state at 24000 without restarting the LR
+schedule: the anchor remains 5000, warmup 200, peak LR 4e-4, horizon 65000, floor .1.
+The dashboard carries the original 960000-frame base at iteration 5000.
+Pictures use **all** shards from the explicitly listed `/train/` directories on
+every rank; no partition or last-shard drop. Paths resolving outside `/train/` or
+containing `heldout` are refused. `--picture-holdout-episodes` defaults to 0 because
+the volume has its own independent heldout split. Never supply `/heldout` paths.
+With batch32 and cats/pictures .15/.15, batches contain 22 primary, 5 cats and 5
+pictures; cats retain exactly their existing share. Pictures require `--extra-data`.
+Without pictures the loader and torchrun command are unchanged. Picture directory
+and fraction settings and picture holdout episodes are locked; legacy non-picture
+locks remain compatible with holdout default 0. A new fork may set all three.
+
+If the first GPU boot failed **before any target checkpoint/run.json was saved**,
+retry with the same environment variables and flags, including `--source-iter`:
+
+```sh
+export DREAMING_RUN_ID=overnight_20261108_pic24k
+export DREAMING_SOURCE_RUN_ID=overnight_20261108_b30024
+export DREAMING_PICTURE_VOLUME=dreaming-picture-pilot-v1
+modal run --detach cluster_run.py::launch --source-iter 24000 --extra-shards 400 --lr 0.0004 --warmup 200 --min-lr-frac 0.1 --restart-iter 5000 --iters 65000 --batch 32 --unroll 6 --ckpt-every 1000 --end-iter 65000 --budget-hours 1 --stop-at 2026-11-08T14:29:00Z --picture-data /pic/train/part_00,/pic/train/part_01 --picture-frac 0.15
+```
+
+No `--source` is needed for this retry: the launcher resolves the `/src` path
+from the validated iteration and requires it to match the target lock exactly.
+All target locked settings must still match, and the source checkpoint and ended
+source ledger are checked again. A nonempty target ledger is retained as-is so
+failed GPU time counts without duplicating inherited time. A missing or empty
+target ledger re-inherits source records. This is not recovery from a partial
+checkpoint: any target `ckpt.pt`, numbered checkpoint, or `run.json` refuses this
+path; use normal completed-checkpoint resume instead. Never retry while an old
+allocation is still running.
+
+For a later continuation of the **target** with its own completed checkpoint,
+omit `--source-iter`, keep the three environment variables and picture settings, and pass
+`--source /src/runs/overnight_20261108_b30024/ckpt_024000.pt` to match the target's
+source lock. Resume then uses the target's own completed numbered checkpoint and
+already inherited ledger rather than copying the source history a second time.
+
 ## Automatic continuation (no quality pause)
 
 `DREAMING_RUN_ID=<id> modal run --detach cluster_run.py::auto_continue --after-iter 20000 --end-iter 65000 --ckpt-every 1000 --stop-at 2026-11-08T14:30:00Z`
