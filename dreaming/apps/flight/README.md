@@ -17,14 +17,14 @@ A minimal green strip shows altitude/speed/heading or the crash/reset message.
 
 The outside scene is rasterized at pixel resolution and each 8x8 cell is matched
 to the closest dedicated flight tile by pixel mismatch. The library contains
-eight fills, 144 angled/offset two-colour edge tiles (horizon, coast, sand, cloud,
+eight fills, 192 angled/offset two-colour edge tiles (horizon, coast, sand, cloud,
 runway), two dither fills and eight rounded cloud parts. This keeps sub-tile boundary detail rather than
 the rejected 4x4-pixel Paint-cell quantization. Cockpit art is fixed tile art;
 needles and attitude indicators are small tile variants.
 
 All art is deduplicated per 8x8 tile, so static gauge parts are shared across
-needle angles and instruments; only crossed tiles vary. Flight uses 394 unique
-tiles: 256 in app_flight and 138 at the start of app_spare (2304..2441).
+needle angles and instruments; only crossed tiles vary. Flight uses 442 unique
+tiles: 256 in app_flight and 186 at the start of app_spare (2304..2489).
 Flight reserves at most the first 256 app_spare IDs (2304..2559), for a hard
 512-tile total limit. No IDs present on main are renumbered.
 Clouds use aligned rounded multi-lobed shapes. Distant runway details are
@@ -33,9 +33,12 @@ suppressed instead of becoming gray blocks; nearby runways retain white markings
 There are **zero new model parameters, heads, embeddings, observation keys or
 sequence positions**. The 532 cockpit/view tokens are ordinary tiles within the
 existing 768-token screen. model.py, dataset.py and train.py match main exactly.
-Flight owns its reserved app state slot and extension fields 12..15.
+Flight is appended after Calculator and Terminal on the desktop. Flight owns
+its reserved app state slot and extension fields 12..15; Calculator owns 0..3,
+Terminal 4..7, and 8..11 remain reserved for Dreamer by main's convention.
 
-Repository investigation: pictures.py draws an 8-colour 32x20 array, which Paint
+Repository investigation (including Pictures #8): pictures/draw.py draws an
+8-colour 32x20 array with continuous-coordinate vector primitives, which Paint
 maps through canvas_id into tiles with four 4x4 colour cells. No finer image-tile
 helper exists on current main. The flight library instead reuses the atlas's
 8x8 pixel-array convention and grid_to_pixels renderer, extending that same
