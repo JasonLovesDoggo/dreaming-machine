@@ -1,6 +1,7 @@
 """World-model inference and the checkpoint registry shared by all browser sessions."""
 import copy
 import glob
+import json
 import os
 import numpy as np
 from ..dataset import OBS_KEYS
@@ -44,28 +45,57 @@ class Neural:
 
 
 class Checkpoints:
-    """Numbered checkpoints (ckpt_XXXXXX.pt) in one run directory; keeps a single model in memory."""
+    """Primary run plus compatible published runs; keeps a single model in memory."""
 
     def __init__(self):
-        self.dir, self.device, self.current = None, 'cpu', None
+        self.dir, self.root, self.device, self.current = None, None, 'cpu', None
         self._loaded = {}
 
-    def configure(self, ckpt_dir, device, name=None):
-        self.dir, self.device = ckpt_dir, device
+    def configure(self, ckpt_dir, device, name=None, run_root=None):
+        self.dir, self.root, self.device = ckpt_dir, run_root, device
+        self._loaded = {}
         names = self.names()
-        if names:
-            self.current = name if name in names else names[-1]
+        primary = [n for n in names if '/' not in n]
+        self.current = name if name in names else (primary or names or [None])[-1]
+        if self.current:
             self.load(self.current)
 
+    def paths(self):
+        paths = {}
+        if self.dir and os.path.isdir(self.dir):
+            numbered = sorted(glob.glob(os.path.join(self.dir, 'ckpt_*.pt')))
+            primary = numbered or glob.glob(os.path.join(self.dir, 'ckpt.pt'))
+            paths.update((os.path.basename(p), p) for p in primary)
+        if self.root:
+            for marker in sorted(glob.glob(os.path.join(self.root, '*', 'run.json'))):
+                directory = os.path.dirname(marker)
+                if self.dir and os.path.realpath(directory) == os.path.realpath(self.dir):
+                    continue
+                try:
+                    with open(marker) as f:
+                        metadata = json.load(f)
+                    if metadata.get('atlas_version') != 2:
+                        continue
+                    latest = int(metadata['iter'])
+                except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                    continue
+                for path in sorted(glob.glob(os.path.join(directory, 'ckpt_*.pt'))):
+                    filename = os.path.basename(path)
+                    try:
+                        iteration = int(filename[5:-3])
+                    except ValueError:
+                        continue
+                    if iteration <= latest:
+                        paths[f'{os.path.basename(directory)}/{filename}'] = path
+        return paths
+
     def names(self):
-        if not self.dir or not os.path.isdir(self.dir):
-            return []
-        numbered = sorted(os.path.basename(f) for f in glob.glob(os.path.join(self.dir, 'ckpt_*.pt')))
-        return numbered or [n for n in ['ckpt.pt'] if os.path.exists(os.path.join(self.dir, n))]
+        return list(self.paths())
 
     def load(self, name):
+        path = self.paths()[name]
         if name not in self._loaded:
-            self._loaded = {name: Neural(os.path.join(self.dir, name), self.device)}
+            self._loaded = {name: Neural(path, self.device)}
         return self._loaded[name]
 
     def session(self, name=None):
