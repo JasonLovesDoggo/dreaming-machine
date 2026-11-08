@@ -14,6 +14,60 @@ footer { margin-top: 16px; color: #888; }
 .screen.dim canvas.sim { opacity: 0.3; }
 #tileinfo { height: 1.2em; color: #ffd75e; }
 
+/* play controls (scoped so the data viewer and atlas keep their layout) */
+body.play-page { max-width: 1576px; margin: 0 auto; padding: 22px 24px; font-size: 13px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.play-page .play-header { margin-bottom: 18px; }
+.play-page h1 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
+.play-page .play-header p { margin: 3px 0 0; color: #a0a6b2; }
+.play-page .screens { gap: 24px; }
+.play-page .screens > div { flex: 1; min-width: 0; }
+.play-page .screen-label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 12px; letter-spacing: .04em; }
+.play-page .screen-label span { color: #a0a6b2; letter-spacing: 0; }
+.play-page .screen { width: auto; height: auto; aspect-ratio: 4 / 3; }
+.play-page .screen canvas { width: 100%; height: 100%; }
+.play-page .play-controls { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.play-page fieldset { flex: 1 1 190px; min-width: 0; margin: 0; padding: 10px 14px 14px; border: 1px solid #363b46; border-radius: 5px; background: #1d2028; }
+.play-page legend { padding: 0 6px; color: #a0a6b2; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
+.play-page .model-controls { flex: 2 1 330px; }
+.play-page .overlay-controls { flex-basis: 250px; }
+.play-page button, .play-page select, .play-page input { font: inherit; margin: 0; accent-color: #8cf; }
+.play-page button, .play-page select, .play-page input[type=number] { box-sizing: border-box; min-height: 34px; border: 1px solid #4b5261; border-radius: 3px; background: #252a35; color: #e0e4eb; padding: 5px 9px; }
+.play-page button { cursor: pointer; }
+.play-page button:hover, .play-page select:hover { background: #2d3441; border-color: #7b879b; }
+.play-page button.primary { color: #b8e1ff; border-color: #6288a3; background: #253647; }
+.play-page button:focus-visible, .play-page select:focus-visible, .play-page input:focus-visible, .play-page a:focus-visible { outline: 2px solid #8cf; outline-offset: 3px; }
+.play-page .session-controls button { display: block; width: 100%; }
+.play-page .session-controls button + button { margin-top: 9px; }
+.play-page .control-row { display: flex; align-items: center; gap: 10px; min-height: 34px; }
+.play-page .control-row + .control-row { margin-top: 9px; }
+.play-page .control-row > span:first-child { flex-shrink: 0; color: #b8bec9; }
+.play-page .model-controls .control-row > span:first-child { width: 88px; }
+.play-page select { flex: 1; min-width: 0; width: 100%; }
+.play-page input[type=range] { flex: 1; min-width: 50px; width: 100%; cursor: pointer; }
+.play-page input[type=number] { width: 64px; margin-left: auto; }
+.play-page output { min-width: 3ch; text-align: right; color: #e0e4eb; }
+.play-page .play-stats { margin-top: 9px; min-height: 34px; display: flex; flex-direction: column; font-size: 12px; white-space: nowrap; }
+.play-page .play-stats > span:first-child { color: #a0a6b2; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.play-page #fps { color: #b8e1ff; }
+.play-page .overlay-toggles { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px; min-height: 34px; margin-bottom: 9px; }
+.play-page .overlay-toggles label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.play-page [hidden] { display: none !important; }
+.play-page #tileinfo { min-height: 1.5em; height: auto; margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.play-page .play-help { margin: 12px 0 0; color: #a0a6b2; font-size: 12px; }
+.play-page .play-help span { display: inline-block; }
+.play-page footer { padding-top: 12px; border-top: 1px solid #363b46; font-size: 12px; line-height: 2; }
+@media (max-width: 900px) {
+  body.play-page { padding: 16px; }
+  .play-page .screens { flex-direction: column; gap: 16px; }
+  .play-page .play-controls { gap: 10px; margin-top: 16px; }
+}
+@media (max-width: 480px) {
+  body.play-page { padding: 12px; }
+  .play-page fieldset { flex-basis: 100%; }
+  .play-page .screen-label { font-size: 11px; }
+  .play-page .play-help span { display: block; margin-top: 4px; }
+}
+
 /* data viewer + atlas */
 #frame { width: 768px; height: 576px; border: 2px solid #444; }
 #scrub { width: 768px; }

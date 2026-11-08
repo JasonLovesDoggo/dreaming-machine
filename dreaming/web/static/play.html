@@ -2,14 +2,18 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dreaming Computer</title>
   <link rel="stylesheet" href="static/style.css">
 </head>
-<body>
-  <h2>Dreaming Computer: real simulator (left) vs world model (right)</h2>
+<body class="play-page">
+  <header class="play-header">
+    <h1>Dreaming Computer</h1>
+    <p>Real simulator vs world model. Same input, two computers.</p>
+  </header>
   <div class="screens">
     <div>
-      <div>REAL (deterministic code)</div>
+      <div class="screen-label">REAL <span>deterministic code</span></div>
       <div class="screen" id="screen-real">
         <canvas class="sim" width="256" height="192"></canvas>
         <canvas class="overlay grid" width="768" height="576"></canvas>
@@ -17,7 +21,7 @@
       </div>
     </div>
     <div>
-      <div>NEURAL (world model, <span id="neural-status">loading</span>)</div>
+      <div class="screen-label">NEURAL <span>world model &middot; <span id="neural-status">loading</span></span></div>
       <div class="screen" id="screen-neural">
         <canvas class="sim" width="256" height="192"></canvas>
         <canvas class="overlay grid" width="768" height="576"></canvas>
@@ -25,18 +29,34 @@
       </div>
     </div>
   </div>
-  <div>
-    <button id="sync">Resync neural to real</button>
-    <button id="reset">Reboot both</button>
-    checkpoint <select id="ckpt"></select>
-    <label><input id="show-grid" type="checkbox"> show tile grid</label>
-    <label><input id="show-ids" type="checkbox" checked> tile IDs</label>
-    temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="temp-value">0.6</span>
-    <span id="fps"></span>
-  </div>
+  <section class="play-controls" aria-label="Computer controls">
+    <fieldset class="session-controls">
+      <legend>Session</legend>
+      <button id="sync" class="primary" title="Copy the real simulator's current state to the neural computer">Resync neural to real</button>
+      <button id="reset" title="Start both computers again from a fresh desktop">Reboot both</button>
+    </fieldset>
+    <fieldset class="model-controls">
+      <legend>World model</legend>
+      <label class="control-row" for="ckpt"><span>Checkpoint</span><select id="ckpt"></select></label>
+      <label class="control-row" for="temp"><span>Temperature</span><input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><output id="temp-value" for="temp">0.6</output></label>
+    </fieldset>
+    <fieldset class="playback-controls">
+      <legend>Playback</legend>
+      <label class="control-row" for="fps-target" title="One frame = one simulator step, so higher values also speed up the game."><span>Target FPS</span><input id="fps-target" type="number" min="5" max="30" step="1" value="15"></label>
+      <div class="play-stats"><span>Actual / RTT</span><span id="fps">Connecting&hellip;</span></div>
+    </fieldset>
+    <fieldset class="overlay-controls">
+      <legend>Overlays</legend>
+      <div class="overlay-toggles">
+        <label><input id="show-grid" type="checkbox"> Tile grid</label>
+        <label><input id="show-ids" type="checkbox" checked> Tile IDs</label>
+      </div>
+      <label class="control-row" id="ids-opacity-control" for="ids-opacity"><span>ID opacity</span><input id="ids-opacity" type="range" min="0" max="1" step="0.05" value="1"><output id="ids-opacity-value" for="ids-opacity">1</output></label>
+    </fieldset>
+  </section>
   <div id="tileinfo"></div>
-  <p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire.
-     Enter, Esc (close window), Backspace.</p>
+  <p class="play-help">Mouse on either screen. Type into Notepad. <span>Arrows: Doom move/turn, Explorer select.</span>
+     <span>Space/Ctrl: fire. Enter, Esc (close window), Backspace.</span></p>
   <footer><a href="data">training data viewer</a> &middot; <a href="sprites">tile &amp; sprite atlas</a> &middot; <a href="training">training metrics</a> &middot; <a href="flight">flight sim (simulator only)</a></footer>
   <script src="static/telemetry.js"></script>
   <script src="static/play.js"></script>
