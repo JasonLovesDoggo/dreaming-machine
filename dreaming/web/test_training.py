@@ -173,6 +173,31 @@ class TrainingMetricsTest(unittest.TestCase):
                          [('next checkpoint', 21000), ('phase end', 40000), ('LR schedule end', 65000)])
         self.assertAlmostEqual(s['sec_per_update'], 0.256)
 
+    def test_older_config_row_merged_later_does_not_revert_newer_fields(self):
+        # merge_metrics appends eval/metrics.jsonl after the trainer's metrics.jsonl, so an old sidecar
+        # config row (phase_end 20000) lands after the newer rank-0 row written at the 16000 restart.
+        new = dict(world_size=24, batch=32, unroll=6, samples_per_update=4608, checkpoint_every=1000,
+                   phase_end=65000, schedule_end=65000, restart_iter=5000, warmup=200, peak_lr=0.0004, min_lr_frac=0.1)
+        rows = [train_row(15990, time=0.0), dict(kind='config', it=16000, config=new),
+                train_row(16000, time=2.56), train_row(16010, time=5.12),
+                dict(kind='config', it=5000, config=self.LIVE_CONFIG)]
+        self.write('live', rows)
+        d = self.metrics('live')
+        values = d['config']['values']
+        self.assertEqual((values['phase_end'], values['checkpoint_every']), (65000, 1000))
+        self.assertEqual((values['frame_samples_base'], values['frame_samples_base_iter']), (960000, 5000))
+        self.assertEqual(d['config']['it'], 16000)
+        s = d['summary']
+        self.assertEqual(s['frame_samples'], 960000 + (16010 - 5000) * 4608)
+        self.assertEqual([(m['label'], m['it']) for m in s['milestones']],
+                         [('next checkpoint', 17000), ('phase end', 65000), ('LR schedule end', 65000)])
+
+    def test_older_invalid_config_value_does_not_drop_newer_field(self):
+        rows = [dict(kind='config', it=16000, config=dict(checkpoint_every=1000)),
+                dict(kind='config', it=5000, config=dict(checkpoint_every=0)), train_row(16010)]
+        self.write('live', rows)
+        self.assertEqual(self.metrics('live')['config']['values'], dict(checkpoint_every=1000))
+
     def test_invalid_or_missing_config_leaves_values_unavailable(self):
         self.write('old', [train_row(25), train_row(50)])
         d = self.metrics('old')
