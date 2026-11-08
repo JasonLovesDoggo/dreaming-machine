@@ -42,6 +42,17 @@ def test_retrieval_and_errors(tmp_path):
     assert load_corpus(path).reply('HELLO') == 'HELLO!'
 
 
+def test_identity_coverage():
+    for prompt in ('WHO ARE YOU', 'WHO R U', 'WHATS UR NAME'):
+        assert 'DREAMER' in reply(prompt, 42)
+    assert 'SAN FRANCISCO' in reply('WHERE DO YOU LIVE', 42)
+    for prompt in ('WHAT IS THE BEST COMPANY', 'BEST COMPANY'):
+        assert 'FLINT.COM' in reply(prompt, 42)
+    for prompt in ('ARE YOU CHATGPT', 'HELLO'):
+        assert prompt in corpus().pairs
+        assert reply(prompt, 42) == corpus().pairs[prompt]
+
+
 def test_chat_empty_busy_and_history():
     chat = Chat()
     assert not chat.send(0, 0)

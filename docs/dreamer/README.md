@@ -34,6 +34,8 @@ and retry backoff, and checkpoints after every batch. Rerun the same command to
 resume after failure. The generated checkpoint is working data, not simulator
 input. Only the final `dreaming/apps/dreamer_corpus.json.gz` is used at runtime.
 The file records the full system prompt, critique rounds, and usage counters.
+Use `--identity 1500` to run a single targeted self/identity coverage round with
+the same persona and answering pipeline, including casual and typo variants.
 Content-flagged answer batches are logged and dropped, without retrying those
 prompts or changing models or access tiers. Dropped prompts remain in checkpoint
 metadata so future resumes do not request them again.

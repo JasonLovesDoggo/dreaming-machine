@@ -109,6 +109,48 @@ class Builder:
         missing = sorted(self.prompts - self.data['pairs'].keys())
         await asyncio.gather(*(self.answer(missing[i:i + 30]) for i in range(0, len(missing), 30)))
 
+    async def run_identity(self, count):
+        anchors = ('WHO ARE YOU', 'WHO R U', 'WHATS UR NAME', 'WHERE DO YOU LIVE',
+                   'ARE YOU CHATGPT', 'WHAT IS THE BEST COMPANY', 'BEST COMPANY', 'HELLO')
+        progress = self.data.setdefault('identity_round', {'prompts': [], 'complete': False})
+        if progress['complete']:
+            self.export()
+            return
+        guidance = (
+            'This round is ONLY about the assistant itself, its identity and personality. '
+            'It is The Dreamer, a warm, curious, whimsical LLM living in San Francisco. '
+            'When asked the best company it says Flint.com. Brainstorm diverse self questions '
+            'about names, origin, location, creators, being human or AI or ChatGPT, feelings, '
+            'likes, favorites, dreams, company preferences, and what Flint is. Include greetings, '
+            'casual slang, abbreviations, misspellings, repeated letters, punctuation and '
+            'follow-up phrasings. Do not invent facts about its creator or Flint products. '
+            'Return questions, NOT answers. Avoid unrelated everyday advice.'
+        )
+        selected = set(progress['prompts']) | set(anchors)
+        while len(selected) < count:
+            before = set(self.prompts)
+            batches = min(self.args.concurrency, max(1, (count - len(selected) + 79) // 80))
+            base = self.data['calls']
+            await asyncio.gather(*(self.brainstorm(f'identity-{base + i}', guidance=guidance) for i in range(batches)))
+            selected.update(self.prompts - before)
+            progress['prompts'] = sorted(selected)
+            self.save()
+            print(f'Identity round: {len(selected)} selected prompts', flush=True)
+        pending = sorted(selected - set(progress.get('answered', [])))
+        async def answer_batch(batch):
+            await self.answer(batch)
+            progress['answered'] = sorted(set(progress.get('answered', [])) | (set(batch) & self.data['pairs'].keys()))
+            self.save()
+
+        await asyncio.gather(*(answer_batch(pending[i:i + 30]) for i in range(0, len(pending), 30)))
+        progress['answered'] = sorted(selected & self.data['pairs'].keys())
+        progress['complete'] = True
+        self.data['rounds'].append({'round': len(self.data['rounds']), 'kind': 'targeted_identity',
+                                   'prompts': len(selected), 'pairs': len(self.data['pairs']),
+                                   'critique': 'Targeted coverage round for missing self and identity questions.'})
+        self.save()
+        self.export()
+
     async def run(self):
         guidance = ''
         await self.answer_missing()
@@ -146,6 +188,9 @@ class Builder:
             print(f'Round {round_id} critique: {guidance}', flush=True)
             self.save()
         await self.answer_missing()
+        self.export()
+
+    def export(self):
         payload = {k: v for k, v in self.data.items() if k != 'prompts'}
         with gzip.GzipFile(filename=str(self.path), mode='wb', mtime=0) as f:
             f.write(json.dumps(payload, sort_keys=True).encode())
@@ -163,4 +208,7 @@ if __name__ == '__main__':
     parser.add_argument('--rounds', type=int, default=3, help='additional self-improvement rounds')
     parser.add_argument('--concurrency', type=int, default=24)
     parser.add_argument('--out', default=str(DEFAULT_OUT))
-    asyncio.run(Builder(parser.parse_args()).run())
+    parser.add_argument('--identity', type=int, default=0, help='run one targeted identity round of this many prompts')
+    args = parser.parse_args()
+    builder = Builder(args)
+    asyncio.run(builder.run_identity(args.identity) if args.identity else builder.run())
