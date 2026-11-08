@@ -1,9 +1,10 @@
 """World model: transformer over (tile grid + cursor + doom tokens + action + memory + state queries)."""
 from dataclasses import dataclass
+from functools import lru_cache
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .tiles import VOCAB, GW, GH
+from .tiles import VOCAB, GW, GH, ATLAS
 from .os_sim import STATE_VOCAB, NKEYS
 from . import doom as dm
 
@@ -157,17 +158,29 @@ def compute_loss(out, y, in_grid, change_weight=10.0, state_weight=0.2):
     return total, parts
 
 
+@lru_cache(maxsize=16)
+def _tile_ids(device):
+    return torch.tensor(ATLAS.used, dtype=torch.long, device=device)
+
+
 @torch.no_grad()
 def decode(out, temperature=0.0):
     def pick(l):
         if temperature <= 0:
             return l.argmax(-1)
         return torch.distributions.Categorical(logits=l.float() / temperature).sample()
-    return dict(
-        grid=pick(out['grid']),
+    tile_ids = _tile_ids(out['grid'].device)
+    decoded = dict(
+        grid=tile_ids[pick(out['grid'].index_select(-1, tile_ids))],
         cursor=torch.stack([out['cx'].argmax(-1), out['cy'].argmax(-1)], -1),
         doom_cols=torch.stack([pick(out[k]) for k in ['d_type', 'd_side', 'd_h', 'd_u']], -1),
         doom_spr=torch.stack([pick(out[k]) for k in ['s_kind', 's_x', 's_size']], -1),
         doom_meta=torch.stack([out[k].argmax(-1) for k in ['m_gun', 'm_vc', 'm_vr']], -1),
         state=out['state'].argmax(-1),
     )
+    # Inactive Doom outputs have no training loss and must not become recurrent inputs.
+    doom_on = decoded['doom_meta'][:, :1] > 0
+    for key in ('doom_cols', 'doom_spr'):
+        decoded[key] = torch.where(doom_on.unsqueeze(-1), decoded[key], 0)
+    decoded['doom_meta'] = torch.where(doom_on, decoded['doom_meta'], 0)
+    return decoded
