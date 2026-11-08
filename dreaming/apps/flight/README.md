@@ -33,9 +33,9 @@ suppressed instead of becoming gray blocks; nearby runways retain white markings
 There are **zero new model parameters, heads, embeddings, observation keys or
 sequence positions**. The 532 cockpit/view tokens are ordinary tiles within the
 existing 768-token screen. model.py, dataset.py and train.py match main exactly.
-Flight is appended after Calculator and Terminal on the desktop. Flight owns
+Flight is appended after Calculator, Terminal and Dreamer on the desktop. Flight owns
 its reserved app state slot and extension fields 12..15; Calculator owns 0..3,
-Terminal 4..7, and 8..11 remain reserved for Dreamer by main's convention.
+Terminal 4..7, and Dreamer 8..11.
 
 Repository investigation (including Pictures #8): pictures/draw.py draws an
 8-colour 32x20 array with continuous-coordinate vector primitives, which Paint
