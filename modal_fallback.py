@@ -1,5 +1,6 @@
 """Frozen fallback demo: separate app + volume, unaffected by deploys of modal_app.py.
   modal run modal_fallback.py::snapshot     # one-time byte copy runs/main + runs/legacy_v1 -> fallback volume
+  modal run modal_fallback.py::snapshot_shards  # copy shards (+ Terra as llm_*) -> fallback, v1 tile/state layout remapped to v2
   modal deploy modal_fallback.py            # serves dreaming-computer-fallback from the read-only fallback volume
 """
 import modal
@@ -47,6 +48,41 @@ def copy_runs():
 def snapshot():
     for path, digest in copy_runs.remote().items():
         print(digest, path)
+
+
+@app.function(image=web_image, volumes={'/src': src, '/dst': fallback}, cpu=8, timeout=3600)
+def copy_shards():
+    import glob
+    import os
+    import numpy as np
+    from dreaming.convert_v1 import TILE_MAP, V1_APPS
+    from dreaming.os_sim import APP_SLOTS, STATE_VOCAB
+    os.makedirs('/dst/shards', exist_ok=True)
+    n_conv = 0
+    paths = [(p, os.path.basename(p)) for p in glob.glob('/src/shards/*.npz')]
+    paths += [(p, 'llm_' + os.path.basename(p)) for p in glob.glob('/src/shards_llm/*.npz')]
+    for s, name in sorted(paths):
+        with np.load(s) as z:
+            d = {k: z[k] for k in z.files}
+        st = d['state']
+        if st.shape[-1] != len(STATE_VOCAB):
+            na = 3 * V1_APPS
+            new = np.zeros(st.shape[:-1] + (len(STATE_VOCAB),), st.dtype)
+            new[..., :na] = st[..., :na]
+            new[..., 3 * len(APP_SLOTS):3 * len(APP_SLOTS) + st.shape[-1] - na] = st[..., na:]
+            d['state'] = new
+            d['grid'] = TILE_MAP[d['grid']].astype(d['grid'].dtype)
+            n_conv += 1
+        assert (d['state'] < np.array(STATE_VOCAB)).all(), name
+        np.savez_compressed(f'/dst/shards/{name}', **d)
+    fallback.commit()
+    return len(paths), n_conv
+
+
+@app.local_entrypoint()
+def snapshot_shards():
+    total, converted = copy_shards.remote()
+    print(f'copied {total} shards ({converted} remapped from v1 layout)')
 
 
 @app.function(image=web_image, gpu=['L4', 'A10G', 'L40S', 'A100', 'H100', 'T4'], volumes={'/vol': fallback.read_only()},
