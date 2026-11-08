@@ -1,6 +1,9 @@
 """Dreamer's Terra corpus, retrieval, input and deterministic driver contract."""
 import gzip
+import asyncio
 import json
+from pathlib import Path
+from runpy import run_path
 import sys
 from types import SimpleNamespace
 import numpy as np
@@ -10,8 +13,8 @@ from .apps.dreamer import Corpus, Chat, corpus, load_corpus, normalize, reply
 from .apps import dreamer
 from .apps.dreamer_persona import MODEL, SYSTEM_PROMPT
 from .dataset import run_episode
-from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_DEL, KEY_UP, KEY_DOWN, STATE_VOCAB
-from .tiles import CHARSET, CHAR_IDX, VOCAB
+from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_DEL, KEY_UP, KEY_DOWN, KEY_PLUS, KEY_TIMES, KEY_EQUALS, STATE_VOCAB
+from .tiles import ATLAS, CHARSET, CHAR_IDX, VOCAB
 
 
 def test_corpus_and_replies():
@@ -51,6 +54,64 @@ def test_identity_coverage():
     for prompt in ('ARE YOU CHATGPT', 'HELLO'):
         assert prompt in corpus().pairs
         assert reply(prompt, 42) == corpus().pairs[prompt]
+    assert 'DREAMER' in reply('ARE YOU CHATGPT', 42)
+    assert reply('ARE YOU CHATGPT', 42).startswith('NO.')
+    for answer in corpus().pairs.values():
+        assert not answer.startswith(('I AM CHATGPT', 'YES. I AM CHATGPT',
+                                      'OPENAI MADE ME', 'I WAS CREATED BY OPENAI'))
+
+
+def test_merged_app_contract():
+    assert [ATLAS[('icon', 'calc', q)] for q in range(4)] == list(range(544, 548))
+    assert [ATLAS[('icon', 'dreamer', q)] for q in range(4)] == list(range(1792, 1796))
+    os = MicroOS(5)
+    assert os.ext_state_fields() == [0] * 16
+    os.open_app('calculator')
+    os.calc.press('2')
+    os.open_app('dreamer')
+    for key in (KEY_PLUS, KEY_TIMES, KEY_EQUALS):
+        os.step((0, 0, 0, key))
+    assert os.chat.input == ''
+    fields = os.ext_state_fields()
+    assert fields[:4] == os.calc.state_fields()
+    assert fields[4:8] == fields[12:] == [0] * 4
+    assert fields[8:12] == [0, 0, 0, 1]
+
+
+@pytest.mark.parametrize('case', ['normal', 'empty', 'flagged'])
+def test_identity_repair_tool(monkeypatch, tmp_path, case):
+    monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(AsyncOpenAI=lambda **kwargs: None))
+    script = run_path(str(Path(__file__).resolve().parents[1] / 'scripts/build_dreamer_corpus.py'))
+    path = tmp_path / 'corpus.gz'
+    pairs = {'HELLO': 'HELLO!'}
+    if case != 'empty':
+        pairs['ARE YOU CHATGPT'] = 'YES. I AM CHATGPT.'
+    with gzip.open(path, 'wt') as stream:
+        json.dump({'pairs': pairs}, stream)
+    builder = script['Builder'](SimpleNamespace(out=path, concurrency=2))
+    calls = []
+
+    async def ask(system, request):
+        calls.append(request)
+        assert system == SYSTEM_PROMPT
+        if case == 'flagged':
+            error = RuntimeError('content flagged')
+            error.status_code = 400
+            raise error
+        return {'answers': ['I AM THE DREAMER. NOT CHATGPT.']}
+
+    builder.ask = ask
+    asyncio.run(builder.repair_identity())
+    result = json.loads(gzip.decompress(path.read_bytes()))
+    assert result['pairs']['HELLO'] == 'HELLO!'
+    assert result['identity_repair']['complete']
+    if case == 'normal':
+        assert result['pairs']['ARE YOU CHATGPT'] == 'I AM THE DREAMER. NOT CHATGPT.'
+    else:
+        assert 'ARE YOU CHATGPT' not in result['pairs']
+    assert len(calls) == (case != 'empty')
+    asyncio.run(builder.repair_identity())
+    assert len(calls) == (case != 'empty')
 
 
 def test_chat_empty_busy_and_history():

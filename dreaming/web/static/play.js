@@ -40,6 +40,9 @@ function bindInput() {
     } else if (QUEUED_KEYS[e.key]) {
       e.preventDefault();
       input.typed.push(QUEUED_KEYS[e.key]);
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && cfg.extra_keys.includes(e.key)) {
+      e.preventDefault();
+      input.typed.push(cfg.key_extra0 + cfg.extra_keys.indexOf(e.key));
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
       const i = cfg.charset.indexOf(e.key.toUpperCase());
       if (i >= 0) { e.preventDefault(); input.typed.push(KEY_CHAR0 + i); }

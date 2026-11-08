@@ -9,6 +9,7 @@ from .pictures import KEYWORDS, IMAGE_EXTS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
 from .apps.dreamer import prompts
+from .apps import calculator as calc
 
 TASK_EVENTS = {
     'explorer': ['ex_open_folder', 'ex_delete', 'ex_restore', 'ex_empty_trash', 'ex_open_png', 'ex_up', 'ex_select'],
@@ -18,6 +19,7 @@ TASK_EVENTS = {
     'windows': ['drag_move', 'close_explorer', 'close_paint', 'close_cards', 'close_doom', 'taskbar_focus'],
     'notepad': ['np_type', 'np_save', 'np_new', 'np_backspace', 'ex_open_txt'],
     'images': ['ex_new_file', 'paint_loaded'],
+    'calculator': ['calc_digit', 'calc_op', 'calc_eq', 'calc_clear', 'calc_del', 'calc_err'],
     'noise': ['desk_select'],
     'chaos': [],
     'dreamer': ['dreamer_send', 'dreamer_reply', 'dreamer_type', 'dreamer_backspace'],
@@ -27,7 +29,8 @@ WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHI
          "FILE SAVE NEW OK YES NO 123 2026 WIN NOTE MEETING AT 5:00 BUY MILK EGGS CALL MOM FIX BUG DEPLOY FRIDAY "
          "COFFEE PIZZA TONIGHT REMEMBER TO WATER PLANTS SOLITAIRE HIGH SCORE KILLS AMMO HP LOVE THIS COMPUTER "
          "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
-BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0}
+BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0,
+          'calculator': 1.0}
 BASE_W['dreamer'] = 1.5
 
 
@@ -39,7 +42,7 @@ class Driver:
         self.x, self.y = SCREEN_W // 2, SCREEN_H // 2
         self.btn = 0
         self.counts = Counter()
-        self.stream = self._main()
+        self.stream = self._guarded(self._main())
 
     # ---------------------------------------------------------------- primitives
     def act(self, key=0):
@@ -640,6 +643,117 @@ class Driver:
                 yield from self.press_key(KEY_UP, 3)
                 yield from self.press_key(KEY_DOWN, 3)
 
+    # ---------------------------------------------------------------- calculator
+    def calc_number(self, small=False):
+        r = self.rng
+        p = r.random() * (0.8 if small else 1.0)
+        if p < 0.45:
+            return r.randint(0, 9)
+        if p < 0.75:
+            return r.randint(10, 99)
+        if p < 0.9:
+            return r.randint(100, 999)
+        if p < 0.97:
+            return r.randint(1000, 99999)
+        return r.randint(10 ** 5, calc.LIMIT)
+
+    def calc_typed(self, n):
+        """Digits of n, sometimes with a typo fixed by backspace."""
+        r = self.rng
+        toks = []
+        for ch in str(n):
+            if r.random() < 0.06:
+                toks += [str(r.randrange(10)), '<']
+            toks.append(ch)
+        return toks
+
+    def calc_problem(self):
+        r = self.rng
+        ops = list(calc.OPS)
+        toks = ['C'] if r.random() < 0.4 else []
+        kind = r.random()
+        if kind < 0.5:  # a op b =
+            a, op = self.calc_number(), r.choice(ops)
+            b = self.calc_number(small=op == '*')
+            if op == '/' and r.random() < 0.5:  # exact division
+                b = r.randint(1, 12)
+                a = b * r.randint(0, 120)
+            toks += self.calc_typed(a) + [op] + self.calc_typed(b) + ['=']
+        elif kind < 0.72:  # chain, '=' at the end (or left pending)
+            toks += self.calc_typed(self.calc_number(small=True))
+            for _ in range(r.randint(2, 5)):
+                toks += [r.choice(ops)] + self.calc_typed(self.calc_number(small=True))
+            if r.random() < 0.85:
+                toks.append('=')
+        elif kind < 0.82:  # continue from the previous result
+            toks = [r.choice(ops)] + self.calc_typed(self.calc_number(small=True)) + ['=']
+        elif kind < 0.87:  # divide by zero
+            toks += self.calc_typed(self.calc_number()) + ['/', '0', '=']
+        elif kind < 0.91:  # overflow
+            toks += self.calc_typed(r.randint(10 ** 4, calc.LIMIT)) + ['*'] + self.calc_typed(r.randint(10 ** 4, calc.LIMIT)) + ['=']
+        else:  # mistakes: wrong op corrected, C midway, '=' spam, too many digits, op first
+            m = r.random()
+            a, b = self.calc_number(small=True), self.calc_number(small=True)
+            if m < 0.3:
+                toks += self.calc_typed(a) + [r.choice(ops), r.choice(ops)] + self.calc_typed(b) + ['=']
+            elif m < 0.5:
+                toks += self.calc_typed(a) + [r.choice(ops)] + ['C'] + self.calc_typed(b) + [r.choice(ops)] + self.calc_typed(a) + ['=']
+            elif m < 0.65:
+                toks += self.calc_typed(a) + [r.choice(ops)] + self.calc_typed(b) + ['='] * r.randint(2, 4)
+            elif m < 0.8:
+                toks += [str(r.randrange(10)) for _ in range(r.randint(9, 12))] + ['<'] * r.randint(0, 3)
+            else:
+                toks += [r.choice(ops)] + self.calc_typed(b) + ['=']
+        return toks
+
+    def calc_press(self, tok, keyboard):
+        r = self.rng
+        if 'calculator' not in self.os.z:
+            return
+        if calc.violates(self.os.calc, tok):  # never multiply by 24: swap the token for a harmless one
+            alts = [t for t in (list('0123456789') if tok.isdigit() else ['+', '-', '/', 'C'])
+                    if not calc.violates(self.os.calc, t)]
+            tok = r.choice(alts)
+        if tok == '<' or (keyboard and r.random() < 0.9) or (not keyboard and r.random() < 0.08):
+            yield from self.ensure_focus('calculator')
+            yield from self.press_key(r.choice(calc.token_keys(tok)))
+            yield from self.idle(r.randint(0, 2) if r.random() < 0.7 else r.randint(3, 8))
+        else:
+            wc, wr, w, h = self.win('calculator')
+            bc, br = calc.button_cell(tok)
+            yield from self.click((wc + bc) * T + r.randint(2, 13), (wr + br) * T + r.randint(2, 13))
+
+    def task_calculator(self, deep=False):
+        r = self.rng
+        yield from self.open_app('calculator')
+        if 'calculator' not in self.os.z:
+            return
+        keyboard = r.random() < 0.45
+        for _ in range(r.randint(3, 10) if deep else r.randint(1, 4)):
+            for tok in self.calc_problem():
+                if 'calculator' not in self.os.z:
+                    return
+                yield from self.calc_press(tok, keyboard)
+            yield from self.idle(r.randint(2, 20))  # read the result
+            if 'calculator' not in self.os.z:
+                return
+            wc, wr, w, h = self.win('calculator')
+            p = r.random()
+            if p < 0.08:  # dead space: LCD, bezel, padding
+                yield from self.click(*self.tile_xy(wc + r.randint(1, w - 2), wr + r.choice([1, 2, 3, 4, h - 2])))
+            elif p < 0.13:  # letters / arrows do nothing here
+                yield from self.ensure_focus('calculator')
+                for _ in range(r.randint(1, 4)):
+                    yield from self.press_key(r.choice([KEY_CHAR0 + r.randrange(1, 27), KEY_UP, KEY_DOWN, KEY_LEFT]))
+            elif p < 0.18:
+                gx = wc * T + r.randint(8, (w - 1) * T - 4)
+                nc, nr = r.randint(0, GW - w), r.randint(0, GH - 1 - h)
+                yield from self.drag(gx, wr * T + r.randint(1, 6), gx + (nc - wc) * T, wr * T + 4 + (nr - wr) * T)
+            elif p < 0.25:
+                keyboard = not keyboard
+        if r.random() < (0.1 if deep else 0.35):
+            yield from self.close('calculator')
+
     def make_name(self):
         r = self.rng
         kws = list(KEYWORDS)
@@ -797,7 +911,7 @@ class Driver:
         r = self.rng
         while len(self.os.z) < r.randint(2, 4):
             before = len(self.os.z)
-            yield from self.open_app(r.choice(['paint', 'cards', 'doom', 'notepad']) if r.random() < 0.8 else 'explorer',
+            yield from self.open_app(r.choice(['paint', 'cards', 'doom', 'notepad', 'calculator']) if r.random() < 0.8 else 'explorer',
                                      'C:' if r.random() < 0.2 else None)
             if len(self.os.z) == before:
                 break
@@ -838,12 +952,22 @@ class Driver:
 
     def observe_events(self, events):
         self.counts.update(events)
+        assert not calc.forbidden(self.os.calc), 'held-out x24 calculation leaked into the data'
+
+    def _guarded(self, stream):
+        """Every action passes the calculator's x24 filter (also catches chaos/noise keys and clicks)."""
+        for a in stream:
+            g = calc.guard_action(self.os, a)
+            if g != a:
+                self.counts['calc_guard'] += 1
+            yield g
 
     def _main(self):
         while True:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
-                            'windows': self.task_windows_deep, 'dreamer': self.task_dreamer}[self.mode]()
+                            'windows': self.task_windows_deep, 'dreamer': self.task_dreamer,
+                            'calculator': lambda: self.task_calculator(deep=True)}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
             task = self.choose_task()

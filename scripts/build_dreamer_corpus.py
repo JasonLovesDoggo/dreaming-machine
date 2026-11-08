@@ -9,6 +9,7 @@ import gzip
 import json
 from pathlib import Path
 import random
+import re
 import sys
 
 from openai import AsyncOpenAI
@@ -151,6 +152,29 @@ class Builder:
         self.save()
         self.export()
 
+    async def repair_identity(self):
+        progress = self.data.setdefault('identity_repair', {
+            'prompts': identity_candidates(self.data['pairs']), 'answered': [], 'complete': False})
+        if progress['complete']:
+            self.export()
+            return
+        self.data['system_prompt'] = SYSTEM_PROMPT
+        pending = sorted(set(progress['prompts']) - set(progress['answered']))
+
+        async def answer_batch(batch):
+            await self.answer(batch)
+            for prompt in batch:
+                if prompt in self.data['skipped']:
+                    self.data['pairs'].pop(prompt, None)
+            progress['answered'] = sorted(set(progress['answered']) | set(batch))
+            self.save()
+
+        print(f'Identity repair: {len(pending)} candidate prompts', flush=True)
+        await asyncio.gather(*(answer_batch(pending[i:i + 30]) for i in range(0, len(pending), 30)))
+        progress['complete'] = True
+        self.save()
+        self.export()
+
     async def run(self):
         guidance = ''
         await self.answer_missing()
@@ -202,6 +226,11 @@ def content_flag(error):
     return getattr(error, 'status_code', None) == 400 and 'flagged' in str(error).lower()
 
 
+def identity_candidates(pairs):
+    brands = re.compile(r'\b(?:CHAT\s*GPT|OPEN\s*AI|ANTHROPIC|CLAUDE|GEMINI|COPILOT|BARD|SIRI|ALEXA|GPT|DEEPSEEK|GROK|CORTANA)\b')
+    return sorted(p for p, a in pairs.items() if brands.search(p) or brands.search(a))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', type=int, default=30000)
@@ -209,6 +238,8 @@ if __name__ == '__main__':
     parser.add_argument('--concurrency', type=int, default=24)
     parser.add_argument('--out', default=str(DEFAULT_OUT))
     parser.add_argument('--identity', type=int, default=0, help='run one targeted identity round of this many prompts')
+    parser.add_argument('--repair-identity', action='store_true', help='rewrite branded identity candidates in persona')
     args = parser.parse_args()
     builder = Builder(args)
-    asyncio.run(builder.run_identity(args.identity) if args.identity else builder.run())
+    asyncio.run(builder.repair_identity() if args.repair_identity else
+                builder.run_identity(args.identity) if args.identity else builder.run())

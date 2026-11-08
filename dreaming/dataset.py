@@ -73,6 +73,6 @@ if __name__ == '__main__':
     ap.add_argument('--eps-per-shard', type=int, default=25)
     ap.add_argument('--workers', type=int, default=os.cpu_count())
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--mode', default='mixed', choices=['mixed', 'doom', 'cards', 'windows', 'dreamer'])
+    ap.add_argument('--mode', default='mixed', choices=['mixed', 'doom', 'cards', 'windows', 'calculator', 'dreamer'])
     a = ap.parse_args()
     generate(a.out, a.steps, a.ep_len, a.eps_per_shard, a.workers, a.seed, mode=a.mode)

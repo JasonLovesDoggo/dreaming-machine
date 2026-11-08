@@ -25,7 +25,8 @@ The input is capped at 160 characters. Empty sends and sends while replying are 
 
 Dreamer uses the reserved app state slot and extension fields 8 through 11.
 Its desktop icon is a black-on-white pixel rendering of the ChatGPT knot mark
-(reference: Wikimedia Commons `ChatGPT_logo.svg`), using the existing icon IDs.
+(reference: Wikimedia Commons `ChatGPT_logo.svg`), using IDs 1792 through 1795
+in the reserved `app_dreamer` section. Main's calculator icon keeps IDs 544 through 547.
 
 To rebuild or extend offline, install `openai` and run
 `python scripts/build_dreamer_corpus.py --target 30000 --rounds 3` with
@@ -36,6 +37,9 @@ input. Only the final `dreaming/apps/dreamer_corpus.json.gz` is used at runtime.
 The file records the full system prompt, critique rounds, and usage counters.
 Use `--identity 1500` to run a single targeted self/identity coverage round with
 the same persona and answering pipeline, including casual and typo variants.
+Use `--repair-identity` to re-answer corpus prompts and answers mentioning other
+assistant brands with the corrected Dreamer persona. This repair is resumable;
+it does not brainstorm additional prompts or run general improvement rounds.
 Content-flagged answer batches are logged and dropped, without retrying those
 prompts or changing models or access tiers. Dropped prompts remain in checkpoint
 metadata so future resumes do not request them again.
