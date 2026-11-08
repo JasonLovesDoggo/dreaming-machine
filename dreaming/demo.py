@@ -230,7 +230,7 @@ fetch('/sprites/index').then(r=>r.json()).then(j=>{const d=document.getElementBy
 def _sections():
     from .tiles import ATLAS
     rng = sorted(ATLAS.ranges.items(), key=lambda kv: kv[1][0])
-    out, prev = [], 0
+    out = []
     if rng and rng[0][1][0] > 0:
         out.append(('ui', 0, rng[0][1][0]))
     for name, (a, b) in rng:

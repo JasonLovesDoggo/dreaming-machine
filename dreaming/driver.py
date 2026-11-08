@@ -695,13 +695,57 @@ class Driver:
         tasks = list(ws)
         return self.rng.choices(tasks, weights=[ws[t] for t in tasks])[0]
 
+    def task_windows_deep(self):
+        r = self.rng
+        while len(self.os.z) < r.randint(2, 4):
+            before = len(self.os.z)
+            yield from self.open_app(r.choice(['paint', 'cards', 'doom', 'notepad']) if r.random() < 0.8 else 'explorer',
+                                     'C:' if r.random() < 0.2 else None)
+            if len(self.os.z) == before:
+                break
+        for _ in range(r.randint(10, 30)):
+            if not self.os.z:
+                return
+            app = r.choice(self.os.z)
+            wc, wr, w, h = self.win(app)
+            gx, gy = wc * T + r.randint(8, (w - 1) * T - 4), wr * T + r.randint(1, 6)
+            c = r.random()
+            if c < 0.45:  # title drag through several waypoints, sometimes to the screen edges
+                yield from self.move_to(gx, gy)
+                self.btn = 1
+                yield self.act()
+                for _ in range(r.randint(1, 4)):
+                    tx = r.choice([0, SCREEN_W - 1, r.randint(0, SCREEN_W - 1)])
+                    ty = r.choice([0, SCREEN_H - 1, r.randint(0, SCREEN_H - 1)])
+                    yield from self.move_to(tx, ty, speed=r.uniform(3, 16))
+                    yield from self.idle(r.randint(0, 3))
+                self.btn = 0
+                yield self.act()
+            elif c < 0.6:  # tiny jittery drag
+                yield from self.drag(gx, gy, gx + r.randint(-6, 6), gy + r.randint(-6, 6), speed=r.uniform(1, 3))
+            elif c < 0.72:  # drag from window body (should not move the window)
+                bx, by = wc * T + r.randint(4, w * T - 4), (wr + r.randint(2, h - 1)) * T + r.randint(1, 6)
+                yield from self.drag(bx, by, r.randint(0, SCREEN_W - 1), r.randint(0, SCREEN_H - 1))
+            elif c < 0.82:  # drop the window onto the taskbar or onto another window
+                tx, ty = (r.randint(0, SCREEN_W - 1), SCREEN_H - 2) if r.random() < 0.5 else (
+                    r.randint(0, SCREEN_W - 1), r.randint(0, SCREEN_H - 1))
+                yield from self.drag(gx, gy, tx, ty)
+            elif c < 0.94:  # rapid focus switching
+                for _ in range(r.randint(2, 6)):
+                    if self.os.z:
+                        yield from self.ensure_focus(r.choice(self.os.z))
+            else:
+                yield from self.close(app)
+            yield from self.idle(r.randint(0, 4))
+
     def observe_events(self, events):
         self.counts.update(events)
 
     def _main(self):
         while True:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
-                yield from (self.task_doom(deep=True) if self.mode == 'doom' else self.task_cards(full=True))
+                yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
+                            'windows': self.task_windows_deep}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
             task = self.choose_task()
