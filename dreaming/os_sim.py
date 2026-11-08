@@ -859,7 +859,12 @@ class MicroOS:
                 put_text(g, wr + 1 + i, wc + 1, line.ljust(44), ctx)
             put_text(g, wr + 15, wc + 1, ('TYPING...' if self.chat.pending else 'ENTER SEND  UP/DOWN HISTORY').ljust(44), 'tool')
             put_text(g, wr + 16, wc + 1, ('> ' + self.chat.input[-41:] + '_').ljust(44), 'body')
-    'flight': (GREEN, K),
+        elif app == 'flight':
+            wc, wr, w, h = self._frame(g, app, 'FLIGHT SIM', 'hud')
+            g[wr + 1:wr + 20, wc + 1:wc + 29] = fl.render_tiles(self.flight)
+            f = self.flight
+            status = 'CRASH - ENTER RESET' if f.crash else f'ALT {int(f.alt):03} SPD {int(f.speed * 30):03} HDG {int(f.heading * 180 / np.pi):03}'
+            put_text(g, wr + 20, wc + 1, status.ljust(56), 'flight')
         elif app == 'notepad':
             wc, wr, w, h = self._frame(g, app, 'NOTEPAD' + (' - ' + self.np_file if self.np_file else ''), 'body')
             self._toolbar(g, wc, wr, w, [(1, 'NEW'), (4, 'SAVE')])

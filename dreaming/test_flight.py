@@ -79,10 +79,11 @@ def test_compact_atlas_and_shared_gauge_parts():
 
 
 def test_flight_and_existing_app_state_slots():
-    assert [item[2][0] for item in DESK_ICONS[-3:]] == ['calculator', 'terminal', 'flight']
+    assert [item[2][0] for item in DESK_ICONS[-4:]] == ['calculator', 'terminal', 'dreamer', 'flight']
     s = MicroOS(3)
     s.open_app('calculator')
     s.open_app('terminal')
+    s.open_app('dreamer')
     before = s.ext_state_fields()
     s.open_app('flight')
     s.flight.alt, s.flight.speed, s.flight.throttle = 120, 3, .5
