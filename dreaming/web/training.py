@@ -451,8 +451,9 @@ def _lr_phase(cfg, it):
 
 def _summary(state, info, now):
     """Active-run numbers: only measured values or arithmetic on the run's own config row, otherwise None."""
-    rows, cfg = _latest_per_it(state.train), state.config
-    last_it, last = rows[-1] if rows else (None, {})
+    # The last-written row, not the highest iteration: after a resume from an earlier checkpoint this is the live cursor.
+    cfg = state.config
+    last_it, last = state.train[-1] if state.train else (None, {})
     last_time = last.get('time')
     sps = _median(state.sps)
     sec, source = _median(state.update_secs), 'row timestamps'

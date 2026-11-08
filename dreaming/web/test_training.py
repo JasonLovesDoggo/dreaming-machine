@@ -203,6 +203,25 @@ class TrainingMetricsTest(unittest.TestCase):
         self.assertEqual((cfg['it'], cfg['rejected']), (299, []))
         self.assertLessEqual(set(cfg['values']), set(training.CONFIG_FIELDS))
 
+    def test_summary_follows_last_written_row_after_resume(self):
+        rows = [dict(kind='config', it=0, config=dict(checkpoint_every=1000, frame_samples_base=0,
+                                                       frame_samples_base_iter=0, samples_per_update=10))]
+        rows += [train_row(it, time=float(it), lr=1e-4) for it in (1000, 2000, 3000)]
+        rows += [eval_row(3000)]
+        rows += [train_row(it, time=5000.0 + it, lr=2e-4) for it in (2100, 2200)]
+        self.write('resumed', rows)
+        d = self.metrics('resumed')
+        s = d['summary']
+        self.assertEqual((d['last_it'], s['last_it'], s['last_time'], s['lr']), (2200, 2200, 7200.0, 2e-4))
+        self.assertEqual(s['frame_samples'], 22000)
+        self.assertEqual(s['milestones'][0]['it'], 3000)
+        self.assertEqual((s['last_eval_it'], d['restarts']), (3000, 1))
+
+    def test_summary_for_eval_only_run(self):
+        self.write('evalonly', [eval_row(5000)])
+        s = self.metrics('evalonly')['summary']
+        self.assertEqual((s['last_it'], s['last_time'], s['last_eval_it'], s['milestones']), (None, None, 5000, []))
+
     def test_summary_falls_back_to_config_samples_per_update(self):
         self.write('run', [dict(kind='config', config=dict(samples_per_update=4608, checkpoint_every=1000)),
                            train_row(25, samples_per_sec=10.0), train_row(50, samples_per_sec=18432.0)])

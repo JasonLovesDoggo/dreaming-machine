@@ -59,11 +59,20 @@
     return `${Math.floor(s / 86400)}d ${Math.floor(s % 86400 / 3600)}h`;
   }
 
+  // Subtitle for the held-out card: how the latest eval relates to the last-written training row.
+  function evalLag(lastIt, evalIt) {
+    if (!finite(evalIt)) return null;
+    if (!finite(lastIt)) return 'no training rows in this run, so no training position to compare with';
+    const d = lastIt - evalIt;
+    if (d < 0) return `${fmtInt(-d)} updates ahead of the latest training row (training resumed from an earlier checkpoint)`;
+    return d === 0 ? 'at the latest training row' : `${fmtInt(d)} updates behind the latest training row`;
+  }
+
   function last(values) {
     if (!values) return null;
     for (let i = values.length - 1; i >= 0; i--) if (values[i] !== null && values[i] !== undefined) return values[i];
     return null;
   }
 
-  return {frameSamplesAt, createZoom, fmtInt, fmtCount, fmtSci, fmtDuration, last};
+  return {frameSamplesAt, evalLag, createZoom, fmtInt, fmtCount, fmtSci, fmtDuration, last};
 }));

@@ -185,7 +185,7 @@ function renderSummary(loaded) {
     `wide${stale ? ' pending' : ''}`));
   tiles.push(s.last_eval_it === null
     ? tile('held-out evaluation', 'not evaluated yet', 'No held-out eval logged for this run. Other runs\' results (e.g. audit A/B) are not its quality.', 'pending')
-    : tile('held-out evaluation', `it ${C.fmtInt(s.last_eval_it)}`, `${C.fmtInt(s.last_it - s.last_eval_it)} updates behind the latest training row; see Held-out quality`));
+    : tile('held-out evaluation', `it ${C.fmtInt(s.last_eval_it)}`, `${C.evalLag(s.last_it, s.last_eval_it)}; see Held-out quality`));
   box.append(...tiles);
 }
 
