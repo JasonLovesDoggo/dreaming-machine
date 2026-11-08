@@ -109,7 +109,7 @@ web_image = (modal.Image.debian_slim(python_version='3.11')
              .add_local_python_source('dreaming', ignore=['**/__pycache__/**']))
 
 
-@app.function(image=web_image, gpu=['L4', 'A10G', 'L40S', 'A100', 'H100', 'T4'], volumes={'/vol': vol}, scaledown_window=1800, timeout=24 * 3600)
+@app.function(image=web_image, gpu=['L4', 'A10G', 'L40S', 'A100', 'H100', 'T4'], volumes={'/vol': vol}, scaledown_window=3600, min_containers=1, timeout=24 * 3600)
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app(label='dreaming-computer')
 def web():
