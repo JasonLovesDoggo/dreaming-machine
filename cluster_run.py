@@ -77,7 +77,9 @@ def train_cluster(cfg: dict):
 
     if rank == 0:
         lock_config(OUT_DIR, cfg)
-        records = json.loads(ledger_path.read_text()) if ledger_path.exists() else list(cfg.get('inherited_ledger', []))
+        records = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
+        if not records:
+            records = list(cfg.get('inherited_ledger', []))
         check_budget(records, cfg['budget_hours'] * 3600, cfg['total_cap_hours'] * 3600)
         records.append(dict(start=start, deadline=start + cfg['budget_hours'] * 3600))
         write_json(ledger_path, records)
@@ -230,11 +232,19 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_ever
             raise ValueError('fork mode requires DREAMING_SOURCE_RUN_ID')
         if resume_iter:
             raise ValueError('source_iter and resume_iter are mutually exclusive')
-        if lock is not None or resumed or marker is not None or records or any(
-                name.startswith('ckpt') or name in {'launch.json', 'ledger.json'} for name in fork_target_names()):
-            raise ValueError('fork target must be fresh, without launch.json or checkpoints')
+        target_names = fork_target_names()
+        if resumed or marker is not None or any(name.startswith('ckpt') or name == 'run.json' for name in target_names):
+            raise ValueError('fork target must have no own checkpoints or run.json; resume normally instead')
+        if lock is not None:
+            match = re.fullmatch(rf'/src/runs/{re.escape(SOURCE_RUN_ID)}/ckpt_([0-9]{{6}})\.pt', lock.get('source', ''))
+            if match is None or type(source_iter) is not int or int(match[1]) != source_iter:
+                raise ValueError('fork recovery source_iter must match target launch.json source')
+        elif records or target_names & {'launch.json', 'ledger.json'}:
+            raise ValueError('fork target must be fresh or have a matching fork launch.json')
         source_marker, source_records, source_names, source_lock = read_source_state(SOURCE_RUN_ID)
         source, inherited = fork_source(SOURCE_RUN_ID, RUN_ID, source_iter, source_marker, source_names, source_records)
+        if lock is not None and records:
+            inherited = []
     if picture_frac > 0 and not PICTURE_VOLUME:
         raise ValueError('picture training requires DREAMING_PICTURE_VOLUME mounted read-only at /pic')
     if resumed and marker is None:

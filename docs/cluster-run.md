@@ -150,10 +150,31 @@ the volume has its own independent heldout split. Never supply `/heldout` paths.
 With batch32 and cats/pictures .15/.15, batches contain 22 primary, 5 cats and 5
 pictures; cats retain exactly their existing share. Pictures require `--extra-data`.
 Without pictures the loader and torchrun command are unchanged. Picture directory
-and fraction settings are locked; legacy non-picture locks remain compatible.
+and fraction settings and picture holdout episodes are locked; legacy non-picture
+locks remain compatible with holdout default 0. A new fork may set all three.
 
-For a later continuation of the **target**, omit `--source-iter` (forks require a
-fresh target), keep the three environment variables and picture settings, and pass
+If the first GPU boot failed **before any target checkpoint/run.json was saved**,
+retry with the same environment variables and flags, including `--source-iter`:
+
+```sh
+export DREAMING_RUN_ID=overnight_20261108_pic24k
+export DREAMING_SOURCE_RUN_ID=overnight_20261108_b30024
+export DREAMING_PICTURE_VOLUME=dreaming-picture-pilot-v1
+modal run --detach cluster_run.py::launch --source-iter 24000 --extra-shards 400 --lr 0.0004 --warmup 200 --min-lr-frac 0.1 --restart-iter 5000 --iters 65000 --batch 32 --unroll 6 --ckpt-every 1000 --end-iter 65000 --budget-hours 1 --stop-at 2026-11-08T14:29:00Z --picture-data /pic/train/part_00,/pic/train/part_01 --picture-frac 0.15
+```
+
+No `--source` is needed for this retry: the launcher resolves the `/src` path
+from the validated iteration and requires it to match the target lock exactly.
+All target locked settings must still match, and the source checkpoint and ended
+source ledger are checked again. A nonempty target ledger is retained as-is so
+failed GPU time counts without duplicating inherited time. A missing or empty
+target ledger re-inherits source records. This is not recovery from a partial
+checkpoint: any target `ckpt.pt`, numbered checkpoint, or `run.json` refuses this
+path; use normal completed-checkpoint resume instead. Never retry while an old
+allocation is still running.
+
+For a later continuation of the **target** with its own completed checkpoint,
+omit `--source-iter`, keep the three environment variables and picture settings, and pass
 `--source /src/runs/overnight_20261108_b30024/ckpt_024000.pt` to match the target's
 source lock. Resume then uses the target's own completed numbered checkpoint and
 already inherited ledger rather than copying the source history a second time.

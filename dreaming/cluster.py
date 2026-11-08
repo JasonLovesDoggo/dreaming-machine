@@ -18,8 +18,8 @@ PROTECTED = {'main', 'atlas_v2_first_5k', 'legacy_v1', 'tput1', 'prof64', 'prof3
              *(f'audit_ab_{c}' for c in 'ABCDE')}
 LOCK_KEYS = ('lr', 'warmup', 'min_lr_frac', 'restart_iter', 'iters', 'batch', 'unroll',
              'data', 'extra_data', 'extra_frac', 'extra_shards', 'holdout_episodes', 'source', 'sampler_v2',
-             'picture_data', 'picture_frac')
-PICTURE_DEFAULTS = dict(picture_data='', picture_frac=0.)
+             'picture_data', 'picture_frac', 'picture_holdout_episodes')
+PICTURE_DEFAULTS = dict(picture_data='', picture_frac=0., picture_holdout_episodes=0)
 
 
 def validate_run_id(run_id):
@@ -75,7 +75,7 @@ def check_fork_lock(cfg, source_lock):
     if not isinstance(source_lock, dict):
         raise ValueError('source run requires launch.json lock')
     source_lock = dict(PICTURE_DEFAULTS, **source_lock)
-    mismatched = [key for key in LOCK_KEYS if key not in {'source', 'picture_data', 'picture_frac'}
+    mismatched = [key for key in LOCK_KEYS if key not in {'source', *PICTURE_DEFAULTS}
                   and (key not in source_lock or cfg[key] != source_lock[key])]
     if mismatched:
         raise ValueError(f'source launch.json lock mismatch: {", ".join(mismatched)}')

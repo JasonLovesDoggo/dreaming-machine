@@ -118,6 +118,13 @@ def test_picture_lock_compatibility_and_command():
         check_lock(picture, old_lock)
     with pytest.raises(ValueError, match='mismatch'):
         check_lock(config('picture-test', picture_data='/pic/train/part_00'), old_lock)
+    with pytest.raises(ValueError, match='mismatch'):
+        check_lock(config('picture-test', picture_holdout_episodes=1), old_lock)
+    holdout = config('picture-test', picture_data='/pic/train/part_00', picture_frac=.15, picture_holdout_episodes=1)
+    with pytest.raises(ValueError, match='mismatch'):
+        check_lock(holdout, check_lock(picture, None))
+    from dreaming.cluster import check_fork_lock
+    check_fork_lock(holdout, old_lock)
     cmd = torchrun_command(picture)
     assert cmd.index('--picture-data') < cmd.index('--')
     assert cmd[cmd.index('--picture-holdout-episodes') + 1] == '0'
@@ -166,6 +173,12 @@ def test_fork_launch(fork_launcher, capsys):
     assert '--extra-shards 400' in output
 
 
+def test_fork_can_set_picture_holdout(fork_launcher, capsys):
+    fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., extra_shards=400,
+                         picture_data='/pic/train/part_00', picture_frac=.15, picture_holdout_episodes=1, dry_run=True)
+    assert '--picture-holdout-episodes 1' in capsys.readouterr().out
+
+
 def lock_config_values(extra_shards):
     from dreaming.cluster import check_lock
     return check_lock(config('source-test', extra_shards=extra_shards), None)
@@ -174,6 +187,93 @@ def lock_config_values(extra_shards):
 def test_fork_source_lock_mismatch(fork_launcher):
     with pytest.raises(ValueError, match='source launch.json lock mismatch: extra_shards'):
         fork_launcher.launch(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., dry_run=True)
+
+
+@pytest.fixture
+def recovering_fork(fork_launcher, monkeypatch):
+    from dreaming.cluster import check_lock
+    source = '/src/runs/overnight_20261108_b30024/ckpt_024000.pt'
+    picture_data = '/pic/train/part_00,/pic/train/part_01'
+    lock = check_lock(config(fork_launcher.RUN_ID, source=source, extra_shards=400,
+                             picture_data=picture_data, picture_frac=.15), None)
+    monkeypatch.setattr(fork_launcher, 'read_state', lambda: (lock, [], False, None))
+    monkeypatch.setattr(fork_launcher, 'fork_target_names', lambda: {'launch.json'})
+    kwargs = dict(source_iter=24000, end_iter=65000, ckpt_every=1000, budget_hours=1., extra_shards=400,
+                  picture_data=picture_data, picture_frac=.15, dry_run=True)
+    return fork_launcher, lock, kwargs
+
+
+def test_fork_recovery_existing_ledger(recovering_fork, monkeypatch, capsys):
+    launcher, lock, kwargs = recovering_fork
+    records = [dict(start=0, deadline=10000, end=3600, inherited_from=launcher.SOURCE_RUN_ID),
+               dict(start=3600, deadline=10000, end=5400)]
+    monkeypatch.setattr(launcher, 'read_state', lambda: (lock, records, False, None))
+    monkeypatch.setattr(launcher, 'fork_target_names', lambda: {'launch.json', 'ledger.json'})
+    launcher.launch(**dict(kwargs, budget_hours=6.))
+    output = capsys.readouterr().out
+    cfg = json.JSONDecoder().raw_decode(output)[0]
+    assert cfg['inherited_ledger'] == []
+    assert cfg['start_iter'] == 24000 and cfg['restart_iter'] == 5000 and cfg['steps'] == 41000
+    assert cfg['source'] == lock['source'] == cfg['resume']
+    assert '--resume /src/runs/overnight_20261108_b30024/ckpt_024000.pt' in output
+    assert '--restart-iter 5000' in output and '--chunk 41000' in output
+    assert records[-1]['end'] == 5400 and len(records) == 2
+    with pytest.raises(ValueError, match='budget exhausted'):
+        launcher.launch(**dict(kwargs, budget_hours=7.))
+
+
+@pytest.mark.parametrize('ledger_file', [False, True])
+def test_fork_recovery_reinherits_empty_ledger(recovering_fork, monkeypatch, capsys, ledger_file):
+    launcher, lock, kwargs = recovering_fork
+    monkeypatch.setattr(launcher, 'fork_target_names', lambda: {'launch.json'} | ({'ledger.json'} if ledger_file else set()))
+    launcher.launch(**kwargs)
+    cfg = json.JSONDecoder().raw_decode(capsys.readouterr().out)[0]
+    assert cfg['inherited_ledger'] == [dict(start=0, deadline=10000, end=3600, inherited_from=launcher.SOURCE_RUN_ID)]
+    assert cfg['source'] == lock['source'] and cfg['start_iter'] == 24000
+
+
+@pytest.mark.parametrize('name', ['ckpt.pt', 'ckpt_024000.pt', 'run.json'])
+def test_fork_recovery_refuses_own_checkpoints(recovering_fork, monkeypatch, name):
+    launcher, _, kwargs = recovering_fork
+    monkeypatch.setattr(launcher, 'fork_target_names', lambda: {'launch.json', name})
+    with pytest.raises(ValueError, match='no own checkpoints or run.json'):
+        launcher.launch(**kwargs)
+
+
+def test_fork_recovery_requires_matching_source_and_target_lock(recovering_fork):
+    launcher, lock, kwargs = recovering_fork
+    with pytest.raises(ValueError, match='source_iter must match'):
+        launcher.launch(**dict(kwargs, source_iter=25000))
+    lock['source'] = '/src/runs/overnight_20261108_b30024/ckpt_24000.pt'
+    with pytest.raises(ValueError, match='source_iter must match'):
+        launcher.launch(**kwargs)
+    lock['source'] = '/src/runs/overnight_20261108_b30024/ckpt_024000.pt'
+    lock['picture_frac'] = .2
+    with pytest.raises(ValueError, match='launch.json schedule mismatch'):
+        launcher.launch(**kwargs)
+
+
+@pytest.mark.parametrize('case', ['active', 'missing', 'advanced'])
+def test_fork_recovery_revalidates_source(recovering_fork, monkeypatch, case):
+    launcher, _, kwargs = recovering_fork
+    marker = dict(iter=23000 if case == 'advanced' else 24000)
+    records = [dict(start=0, deadline=10000)] if case == 'active' else [dict(start=0, deadline=10000, end=3600)]
+    names = set() if case == 'missing' else {'ckpt_024000.pt'}
+    monkeypatch.setattr(launcher, 'read_source_state', lambda _: (marker, records, names, lock_config_values(400)))
+    with pytest.raises(ValueError):
+        launcher.launch(**kwargs)
+
+
+def test_fork_target_normal_resume_uses_own_checkpoint(recovering_fork, monkeypatch, capsys):
+    launcher, lock, kwargs = recovering_fork
+    monkeypatch.setattr(launcher, 'read_state', lambda: (lock, [], True, dict(iter=26000)))
+    monkeypatch.setattr(launcher, 'read_names', lambda: {'ckpt.pt', 'ckpt_026000.pt', 'run.json'})
+    monkeypatch.setattr(launcher, 'read_source_state', lambda _: pytest.fail('normal resume must not read source ledger'))
+    launcher.launch(**dict(kwargs, source_iter=0, source=lock['source']))
+    output = capsys.readouterr().out
+    cfg = json.JSONDecoder().raw_decode(output)[0]
+    assert cfg['start_iter'] == 26000 and cfg['steps'] == 39000
+    assert f'--resume {launcher.OUT_DIR}/ckpt_026000.pt' in output
 
 
 def test_fork_source_lock_missing_keys():
