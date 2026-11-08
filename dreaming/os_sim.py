@@ -8,10 +8,12 @@ from . import doom as dm
 from . import pictures as pics
 from .apps import calculator as calc_app
 from .apps.terminal import Terminal
+from .apps import dreamer
 
 APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13),
              'calculator': (calc_app.W, calc_app.H)}
 APP_SIZES['terminal'] = (20, 14)
+APP_SIZES['dreamer'] = (24, 18)
 APPS = list(APP_SIZES)
 # Fixed OS-state slots: existing apps keep their slot forever; new apps take a reserved one (never reorder).
 APP_SLOTS = ['explorer', 'paint', 'cards', 'doom', 'notepad', 'calculator', 'terminal', 'dreamer', 'flight', 'spare']
@@ -22,6 +24,8 @@ APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': '
 DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6), 'calculator': (18, 3)}
 APP_TITLES['terminal'] = 'TERMINAL'
 DEFAULT_POS['terminal'] = (12, 5)
+APP_TITLES['dreamer'] = 'DREAMER'
+DEFAULT_POS['dreamer'] = (7, 3)
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
 KEY_CHAR0 = 9  # typed characters: KEY_CHAR0 + index into CHARSET (space = 9)
 KEY_EXTRA0 = KEY_CHAR0 + NCH  # typed symbols with no font glyph (append only): KEY_EXTRA0 + index into EXTRA_KEYS
@@ -35,6 +39,7 @@ DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('expl
               ('notepad', 'NOTES', ('notepad', None)), ('calc', 'CALC', ('calculator', None))]
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
 DESK_ICONS.append(('terminal', 'TERM', ('terminal', None)))
+DESK_ICONS.append(('dreamer', 'DREAM', ('dreamer', None)))
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
 TASKBAR_BTN_W = 5
@@ -114,6 +119,7 @@ class MicroOS:
         self.deal_no = 0
         self.doom = dm.Doom()
         self.calc = calc_app.Calc()
+        self.chat = dreamer.Chat()
         self._reset_app('explorer'); self._reset_app('paint'); self._reset_app('cards'); self._reset_app('notepad')
         return self.observe([])
 
@@ -152,6 +158,8 @@ class MicroOS:
             self.doom.reset()
         elif app == 'calculator':
             self.calc = calc_app.Calc()
+        elif app == 'dreamer':
+            self.chat = dreamer.Chat()
 
     @property
     def focus(self):
@@ -240,6 +248,8 @@ class MicroOS:
             if self.pt_load == 10:
                 events.append('paint_loaded')
         self.btn = btn
+        if 'dreamer' in self.z and self.chat.tick():
+            events.append('dreamer_reply')
         self.t += 1
         return self.observe(events)
 
@@ -304,6 +314,22 @@ class MicroOS:
             return
         if key == KEY_ESC and app:
             self.close_app(app, events)
+        elif app == 'dreamer':
+            if key == KEY_ENTER:
+                if self.chat.send(self.seed, self.t):
+                    events.append('dreamer_send')
+            elif key == KEY_DEL:
+                self.chat.input = self.chat.input[:-1]
+                events.append('dreamer_backspace')
+            elif key == KEY_UP:
+                self.chat.scroll = min(self.chat.scroll + 1, max(0, len(self.chat.lines()) - 14))
+            elif key == KEY_DOWN:
+                self.chat.scroll = max(0, self.chat.scroll - 1)
+            elif KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.chat.input) < 160:
+                candidate = self.chat.input + CHARSET[key - KEY_CHAR0]
+                if not dreamer.held_out_multiplication(candidate):
+                    self.chat.input = candidate
+                    events.append('dreamer_type')
         elif app == 'notepad':
             if KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.np_text) < NP_MAX:
                 self.np_text += CHARSET[key - KEY_CHAR0]
@@ -685,6 +711,9 @@ class MicroOS:
     def _press_doom(self, mx, my, lc, lr, dbl, events):
         pass
 
+    def _press_dreamer(self, mx, my, lc, lr, dbl, events):
+        pass
+
     # ------------------------------------------------------------------ render
     def render_grid(self):
         g = np.full((GH, GW), ATLAS[('solid', 'desk')], np.int32)
@@ -808,6 +837,14 @@ class MicroOS:
             wc, wr, w, h = self._frame(g, app, 'DOOM', 'body')
             g[wr + 1:wr + 16, wc + 1:wc + 21] = ATLAS[('doom_view',)]
             put_text(g, wr + 16, wc + 1, self.doom.hud_text().center(40), 'hud')
+        elif app == 'dreamer':
+            wc, wr, w, h = self._frame(g, app, 'THE DREAMER', 'body')
+            lines = self.chat.lines()
+            end = max(0, len(lines) - self.chat.scroll)
+            for i, (ctx, line) in enumerate(lines[max(0, end - 14):end]):
+                put_text(g, wr + 1 + i, wc + 1, line.ljust(44), ctx)
+            put_text(g, wr + 15, wc + 1, ('TYPING...' if self.chat.pending else 'ENTER SEND  UP/DOWN HISTORY').ljust(44), 'tool')
+            put_text(g, wr + 16, wc + 1, ('> ' + self.chat.input[-41:] + '_').ljust(44), 'body')
         elif app == 'notepad':
             wc, wr, w, h = self._frame(g, app, 'NOTEPAD' + (' - ' + self.np_file if self.np_file else ''), 'body')
             self._toolbar(g, wc, wr, w, [(1, 'NEW'), (4, 'SAVE')])
@@ -842,6 +879,10 @@ class MicroOS:
                         min(len(self.term.input) // 2, 31),
                         PATHS.index(self.term.cwd) if self.term.cwd in PATHS else 5,
                         min(len(self.term.lines), 31)]
+        # Dreamer owns ext fields 8:12; all values fit EXT_VOCAB.
+        if 'dreamer' in self.z:
+            ext[8:12] = [int(bool(self.chat.pending)), min(31, self.chat.progress // 4),
+                          min(31, self.chat.scroll), len(self.chat.messages)]
         return ext
 
     def state_vector(self):
