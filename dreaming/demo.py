@@ -46,12 +46,12 @@ function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImag
  for(let i=0;i<256*192;i++){const p=PAL[bytes[off+i]];img.data[4*i]=p[0];img.data[4*i+1]=p[1];img.data[4*i+2]=p[2];img.data[4*i+3]=255;}
  ctx.putImageData(img,0,0);}
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+location.pathname.replace(/\\/$/,'')+'/ws');
-ws.binaryType='arraybuffer'; let t0=performance.now();
-function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp}));cmd=null;}
+ws.binaryType='arraybuffer'; let t0=performance.now(),avg=66,sent=performance.now();
+function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;sent=performance.now();ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp}));cmd=null;}
 ws.onopen=send;
 ws.onmessage=e=>{const b=new Uint8Array(e.data);draw(cv.real,b,0);if(b.length>49152)draw(cv.neural,b,49152);
- const dt=performance.now()-t0;t0=performance.now();document.getElementById('info').textContent=` ${(1000/dt).toFixed(1)} fps`;
- setTimeout(send,Math.max(0,66-dt));};
+ const now=performance.now(),dt=now-t0;t0=now;avg=avg*0.9+dt*0.1;document.getElementById('info').textContent=` ${(1000/avg).toFixed(1)} fps`;
+ setTimeout(send,Math.max(0,66-(performance.now()-sent)));};
 </script></body></html>"""
 
 
@@ -107,7 +107,12 @@ async def ws(sock: WebSocket):
         elif msg.get('cmd') == 'sync' and neural:
             neural.sync(obs)
         a = (int(msg['x']), int(msg['y']), int(msg['btn']), int(msg['key']))
-        obs = real.step(a)
+        try:
+            obs = real.step(a)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            obs = real.reset(random.randrange(10 ** 9))
         frames = [obs_to_pixels(obs)]
         if neural:
             frames.append(obs_to_pixels(neural.step(a, float(msg.get('temp', 0.0)))))

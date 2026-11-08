@@ -109,6 +109,8 @@ class MicroOS:
             self.pt_color, self.pt_file, self.pt_drawing, self.pt_last = 1, None, False, None
             self.pt_load = 0 if arg else 10
             if arg:
+                if arg not in self.pictures:
+                    self.pictures[arg] = pics.generate(arg, self.pic_rng)
                 self.pt_canvas = self.pictures[arg].copy()
                 self.pt_file = arg
         elif app == 'cards':
@@ -154,6 +156,10 @@ class MicroOS:
         self.z.append(app)
 
     def close_app(self, app, events):
+        if self.drag and self.drag[0] == app:
+            self.drag = None
+        if app == 'paint':
+            self.pt_drawing = False
         self.z.remove(app)
         self.pos.pop(app, None)
         if app in ('paint', 'notepad'):
@@ -169,6 +175,8 @@ class MicroOS:
         events = []
         press, release = btn and not self.btn, (not btn) and self.btn
         self.mx, self.my = mx, my
+        if self.drag and self.drag[0] not in self.z:
+            self.drag = None
         if self.drag and btn:
             app, gx, gy = self.drag
             w, h = APP_SIZES[app]
@@ -222,6 +230,9 @@ class MicroOS:
 
     def _press(self, mx, my, dbl, events):
         c, r = mx // T, my // T
+        if self.ex_naming is not None and self._window_at(c, r) != 'explorer':
+            self.ex_naming = None
+            events.append('ex_name_cancel')
         if r == GH - 1:
             if 0 <= c - 4 and (c - 4) % TASKBAR_BTN_W < 4:
                 i = (c - 4) // TASKBAR_BTN_W
@@ -322,6 +333,9 @@ class MicroOS:
                 self._ex_open(events)
         else:
             self.ex_sel = -1
+
+    def _name_taken(self, name):
+        return any(n == name for folder in self.fs.values() for n, _ in folder)
 
     def _ex_name_key(self, key, events):
         if key >= KEY_CHAR0:
@@ -445,6 +459,8 @@ class MicroOS:
         if self.pt_file is None:
             if len(self.fs['C:/PICS']) >= 9:
                 return
+            while self._name_taken(f'PIC{self.new_pic}.PNG'):
+                self.new_pic += 1
             self.pt_file = f'PIC{self.new_pic}.PNG'
             self.new_pic += 1
             self.fs['C:/PICS'].append((self.pt_file, 'png'))
@@ -467,6 +483,8 @@ class MicroOS:
             if self.np_file is None:
                 if len(self.fs['C:/DOCS']) >= 9:
                     return
+                while self._name_taken(f'DOC{self.new_doc}.TXT'):
+                    self.new_doc += 1
                 self.np_file = f'DOC{self.new_doc}.TXT'
                 self.new_doc += 1
                 self.fs['C:/DOCS'].append((self.np_file, 'txt'))
