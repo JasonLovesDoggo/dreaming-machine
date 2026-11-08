@@ -73,6 +73,7 @@ NEO_LOGO = [
 TEXT_CTX = {
     'title': (WHITE, NAVY), 'title_in': (LGRAY, DGRAY), 'body': (K, WHITE), 'sel': (WHITE, BLUE),
     'tool': (K, LGRAY), 'desk': (WHITE, TEAL), 'hud': (RED, K), 'term': (GREEN, K),
+    'dreamer': (WHITE, NAVY),
 }
 CTX_NAMES = list(TEXT_CTX)
 
@@ -116,6 +117,11 @@ ICON_ART['terminal'] = ['................', '.gggggggggggggg.', '.gkkkkkkkkkkkkg
                         '.gkkkkkkkkkkkkg.', '.gkGkkkkkkkkkkg.', '.gkkGkkkkkkkkkg.',
                         '.gkkkGkkkkkkkkg.', '.gkkGkkkkkkkkkg.', '.gkGkkGGGkkkkkg.'] + [
                         '.gkkkkkkkkkkkkg.'] * 4 + ['.gggggggggggggg.', '................', '................']
+ICON_ART['dreamer'] = ['wwwwwwwwwwwwwwww', 'wwwwwwkkwwwwwwww', 'wwwwwkwwkkkkwwww',
+                       'wwwwkwwwkwwwkwww', 'wwwkkwkwwwwwwkww', 'wwkwkwkwkkkkwkww',
+                       'wkwwkwkkkwwwkkww', 'wkwwkwkwwkkwwkww', 'wwkwwkkwwkwkwwkw',
+                       'wwkkwwwkkkwkwwkw', 'wwkwkkkkwkwkwkww', 'wwkwwwwwwkwkkkww',
+                       'wwwkwwwkwwwkwwww', 'wwwwkkkkwwkwwwww', 'wwwwwwwkkkwwwwww', 'wwwwwwwwwwwwwwww']
 ART_COLORS = {'o': TAN, 'y': YELLOW, 'd': DGRAY, 'g': LGRAY, 'k': K, 's': BLUE, 'G': GREEN, 'r': RED, 'b': BLUE,
               'w': WHITE, 'O': ORANGE}
 MINI_ART = {
@@ -226,9 +232,16 @@ def build_atlas():
     A.__exit__()
     A.section('icon')
     for name, art in ICON_ART.items():
+        if name == 'dreamer':
+            continue
         for q in range(4):
             qy, qx = divmod(q, 2)
             A.add(('icon', name, q), art_tile(art, TEAL, qy * T, qx * T))
+    A.__exit__()
+    A.section('app_dreamer')
+    for q in range(4):
+        qy, qx = divmod(q, 2)
+        A.add(('icon', 'dreamer', q), art_tile(ICON_ART['dreamer'], TEAL, qy * T, qx * T))
     A.__exit__()
     A.section('mini')
     for name, art in MINI_ART.items():

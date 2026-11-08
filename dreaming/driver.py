@@ -8,6 +8,7 @@ from .tiles import CHAR_IDX
 from .pictures import IMAGE_EXTS, CATEGORY_WORDS, CAT_WORDS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
+from .apps.dreamer import prompts
 from .apps import calculator as calc
 
 TASK_EVENTS = {
@@ -22,6 +23,7 @@ TASK_EVENTS = {
     'calculator': ['calc_digit', 'calc_op', 'calc_eq', 'calc_clear', 'calc_del', 'calc_err'],
     'noise': ['desk_select'],
     'chaos': [],
+    'dreamer': ['dreamer_send', 'dreamer_reply', 'dreamer_type', 'dreamer_backspace'],
 }
 SUBJECT_KEYS = sorted(k for k in CATEGORY_WORDS if k != 'cat')
 CAT_BASE_WORDS = ['CAT', 'CAT', 'KITTY', 'KITTEN', 'CATS']
@@ -33,6 +35,7 @@ WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHI
 BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0,
           'calculator': 1.0}
 BASE_W['terminal'] = 1.2
+BASE_W['dreamer'] = 1.5
 
 
 class Driver:
@@ -615,6 +618,35 @@ class Driver:
         if r.random() < 0.3:
             yield from self.close('notepad')
 
+    def task_dreamer(self):
+        yield from self.open_app('dreamer')
+        if self.os.focus != 'dreamer':
+            return
+        for _ in range(self.rng.randint(2, 6)):
+            yield from self.press_key(KEY_ENTER)
+            prompt = self.rng.choice(prompts())[:150]
+            messy = self.rng.random()
+            if messy < 0.1:
+                prompt = ''.join(self.rng.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ') for _ in range(self.rng.randint(1, 30)))
+            elif messy < 0.25 and len(prompt) > 3:
+                i = self.rng.randrange(len(prompt) - 1)
+                prompt = prompt[:i] + prompt[i + 1] + prompt[i] + prompt[i + 2:]
+            elif messy < 0.35:
+                prompt = prompt[:self.rng.randint(1, len(prompt))]
+            elif messy < 0.45:
+                prompt = prompt + '!!!'
+            yield from self.type_text(prompt)
+            if self.rng.random() < 0.3:
+                yield from self.type_text('X')
+                yield from self.press_key(KEY_DEL)
+            yield from self.press_key(KEY_ENTER)
+            while self.os.chat.pending:
+                yield from self.idle(4)
+            yield from self.idle(self.rng.randint(12, 35))
+            if self.rng.random() < 0.3:
+                yield from self.press_key(KEY_UP, 3)
+                yield from self.press_key(KEY_DOWN, 3)
+
     # ---------------------------------------------------------------- calculator
     def calc_number(self, small=False):
         r = self.rng
@@ -1012,7 +1044,7 @@ class Driver:
         while True:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
-                            'windows': self.task_windows_deep,
+                            'windows': self.task_windows_deep, 'dreamer': self.task_dreamer,
                             'calculator': lambda: self.task_calculator(deep=True),
                             'terminal': lambda: self.task_terminal(deep=True)}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
