@@ -17,7 +17,7 @@ from .dataset import OBS_KEYS
 from .driver import Driver
 from .os_sim import KEY_ENTER, MicroOS
 from .pictures import CATEGORY_WORDS, IMAGE_EXTS, is_image, parse_name
-from .tiles import CHARSET, PAL, T
+from .tiles import CANVAS_COLORS, CHARSET, PAL, T
 
 SEED_BASES = {'train': 200_000_000, 'heldout': 210_000_000}
 SEED_SPAN = 10_000_000
@@ -165,7 +165,7 @@ def contact_sheet(samples: list, path: Path) -> None:
         x, y = i % 8 * 160, i // 8 * 112
         draw.text((x + 2, y + 2), name, fill='black')
         draw.text((x + 2, y + 14), str(seed), fill='black')
-        picture = Image.fromarray(PAL[canvas]).resize((128, 80), Image.Resampling.NEAREST)
+        picture = Image.fromarray(PAL[CANVAS_COLORS][canvas]).resize((128, 80), Image.Resampling.NEAREST)
         sheet.paste(picture, (x + 2, y + 28))
     sheet.save(path)
 

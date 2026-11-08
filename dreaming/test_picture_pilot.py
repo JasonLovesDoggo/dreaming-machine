@@ -2,10 +2,12 @@ import json
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from .dataset import OBS_KEYS, load_shards
 from .picture_pilot import (CORE_NAMES, SEED_BASES, SEED_SPAN, episode_seed, filename_for_seed,
-                            generate, replay_matches, run_episode)
+                            contact_sheet, generate, replay_matches, run_episode)
+from .tiles import CANVAS_COLORS, PAL
 
 
 def test_split_seed_namespaces_are_disjoint():
@@ -45,6 +47,14 @@ def test_hidden_seed_variation_and_broader_names():
     names = {filename_for_seed(episode_seed('train', i)) for i in range(512)}
     assert set(CORE_NAMES) <= names
     assert len(names) > 100
+
+
+def test_contact_sheet_uses_the_simulator_canvas_palette(tmp_path):
+    canvas = np.tile(np.arange(8, dtype=np.uint8), (20, 4))
+    path = tmp_path / 'palette.png'
+    contact_sheet([('PALETTE.PNG', 200_000_000, canvas)], path)
+    image = np.asarray(Image.open(path))
+    np.testing.assert_array_equal(image[28:108:4, 2:130:4], PAL[CANVAS_COLORS][canvas])
 
 
 def test_corrupt_replay_is_rejected():
