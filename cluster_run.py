@@ -111,7 +111,7 @@ def read_state():
 
 
 @app.local_entrypoint()
-def launch(phase: str = 'long', steps: int = 0, end_iter: int = 45000,
+def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
            guard_max_loss: float = 2.0, lr: float = 4e-4, warmup: int = 200,
            iters: int = 65000, budget_hours: float = 8., dry_run: bool = False,
            min_lr_frac: float = 0.1, restart_iter: int = 5000, batch: int = 32,
