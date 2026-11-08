@@ -11,7 +11,7 @@ from . import doom as dm
 from .apps import calculator as calc
 
 TASK_EVENTS = {
-    'terminal': ['term_cmd', 'term_error', 'term_fs', 'basic_run', 'basic_done', 'btop_open'],
+    'terminal': ['term_cmd', 'term_error', 'term_fs', 'btop_open', 'neofetch'],
     'explorer': ['ex_open_folder', 'ex_delete', 'ex_restore', 'ex_empty_trash', 'ex_open_png', 'ex_up', 'ex_select'],
     'paint': ['paint_stroke', 'paint_color', 'paint_save', 'paint_clear'],
     'cards': ['cards_move', 'cards_found', 'cards_flip', 'cards_draw'],
@@ -805,11 +805,6 @@ class Driver:
         if self.os.focus != 'terminal': return
         if self.os.term.mode == 3:
             yield from self.press_key(KEY_ESC)
-        if self.os.term.basic.running:
-            yield from self.press_key(KEY_ESC)
-        if self.os.term.mode == 1:
-            yield from self.type_text('BYE')
-            yield from self.press_key(KEY_ENTER)
         def command(text, shell=False):
             if shell and r.random() < 0.15:
                 text = self.terminal_typo(text)
@@ -836,51 +831,11 @@ class Driver:
                         'CP ' + full + ' C:/' + name + '.TXT', 'MV ' + full + ' ' + name + '.TXT',
                         'RM ' + full, 'ECHO HELLO DREAM > ' + name + '.TXT', 'CLEAR', 'LSX', 'SL', '']
             choice = r.random()
-            if choice < 0.18:
-                saved = [p + '/' + n for p, items in self.os.fs.items() for n, k in items
-                         if k == 'txt' and n.endswith('.BAS') and n not in ('STARS.BAS', 'COUNT.BAS')]
-                if r.random() < 0.3:
-                    target = r.choice(saved) if saved and r.random() < 0.6 else 'C:/GAMES/STARS.BAS'
-                    yield from command('RUN ' + target)
-                else:
-                    yield from command('BASIC')
-                    if self.os.term.mode != 1: continue
-                    v, char = r.randint(5, 15), r.choice('!>_.-ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-                    multiplier, divisor = r.randint(2, 9), r.randint(2, 5)
-                    templates = [
-                        [f'10 FOR I 1 TO {v}', '20 PRINT I', '30 NEXT I'],
-                        [f'10 FOR I 1 TO {v}', f'20 RPT I {char}', '30 NEXT I'],
-                        [f'10 FOR I 1 TO {v}', f'20 RPT I MUL 2 SUB 1 {char} {v} SUB I', '30 NEXT I'],
-                        [f'10 FOR I 1 TO {v}', f'20 RPT I MUL 2 SUB 1 {char} {v} SUB I', '30 NEXT I',
-                         f'40 FOR I {v - 1} TO 1 STEP -1', f'50 RPT I MUL 2 SUB 1 {char} {v} SUB I', '60 NEXT I'],
-                        [f'10 LET I {v}', '20 PRINT I', '30 LET I I SUB 1', '40 IF I GT 0 THEN 20'],
-                        [f'10 FOR I 1 TO {multiplier}', f'20 FOR J 1 TO {v}', '30 PRINT I MUL J',
-                         '40 NEXT J', '50 NEXT I'],
-                        [f'10 FOR I 1 TO {v}', f'20 IF I MOD {divisor} EQ 0 THEN 50', '30 PRINT I',
-                         '40 GOTO 60', '50 PRINT FIZZ', '60 NEXT I'],
-                        [f'10 FOR I 1 TO {v * 3}', f'20 RPT I MOD {divisor} ADD 1 {char}', '30 NEXT I'],
-                        [f'10 PRNT {v}'], ['10 NEXT I'], [f'10 GOTO {v * 10}'],
-                        [f'10 PRINT {v} DIV 0'], [f'10 RPT {v} {char}', '20 GOTO 10']]
-                    yield from command('NEW')
-                    program = r.choice(templates)
-                    for line in program:
-                        if 'PRINT ' in line and r.random() < 0.25:
-                            yield from command(line.replace('PRINT ', 'PRNT ', 1))
-                        yield from command(line)
-                    if r.random() < 0.4: yield from command('LIST')
-                    yield from command('RUN')
-                yield from self.idle(r.randint(20, 100))
-                if self.os.term.basic.running: yield from self.press_key(KEY_ESC)
-                if self.os.term.mode == 1:
-                    if r.random() < 0.5:
-                        yield from command('LIST')
-                        yield from command('SAVE ' + name + '.BAS')
-                    yield from command('BYE')
-            elif choice < 0.3:
+            if choice < 0.15:
                 yield from command('BTOP')
                 yield from self.idle(r.randint(20, 120))
                 yield from self.press_key(KEY_ESC if r.random() < 0.5 else KEY_CHAR0 + CHAR_IDX['Q'])
-            elif choice < 0.4:
+            elif choice < 0.25:
                 yield from self.type_text('LSX')
                 yield from self.press_key(KEY_DEL)
                 yield from self.press_key(KEY_ENTER)

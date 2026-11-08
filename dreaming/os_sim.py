@@ -110,11 +110,6 @@ class MicroOS:
             'OLD.TXT': 'THIS FILE IS OLD.\nYOU CAN EMPTY THE TRASH.',
         }
         self.new_doc = 1
-        self.fs['C:/GAMES'] += [('STARS.BAS', 'txt'), ('COUNT.BAS', 'txt')]
-        self.texts['STARS.BAS'] = ('10 FOR I 1 TO 9\n20 RPT I MUL 2 SUB 1 ! 9 SUB I\n30 NEXT I\n'
-                                   '40 FOR I 8 TO 1 STEP -1\n50 RPT I MUL 2 SUB 1 ! 9 SUB I\n'
-                                   '60 NEXT I\n70 END')
-        self.texts['COUNT.BAS'] = '10 FOR I 1 TO 50\n20 PRINT I\n30 NEXT I\n40 END'
         self.term = Terminal(self)
         self.deal_no = 0
         self.doom = dm.Doom()
@@ -234,8 +229,6 @@ class MicroOS:
             self.c_press, self.c_dragging = None, False
         if key:
             self._key(key, events)
-        if 'terminal' in self.z:
-            self.term.tick(events)
         if self.focus == 'doom':
             fire = press and self._in_doom_view(mx, my)
             dkey = key if key in (1, 2, 3, 4, 5) else (KEY_FIRE if key == KEY_CHAR0 else 0)
@@ -845,7 +838,7 @@ class MicroOS:
             ext[0:4] = self.calc.state_fields()
         # ext[4:8] = terminal; ext[0:4] calculator, 8:12 dreamer, 12:16 flight reserved by convention
         if 'terminal' in self.z:
-            ext[4:8] = [2 if self.term.basic.running else self.term.mode,
+            ext[4:8] = [self.term.mode,
                         min(len(self.term.input) // 2, 31),
                         PATHS.index(self.term.cwd) if self.term.cwd in PATHS else 5,
                         min(len(self.term.lines), 31)]

@@ -1,4 +1,4 @@
-"""Terminal integration and interpreter regression checks."""
+"""Terminal shell and rendering regression checks."""
 from .os_sim import MicroOS, APP_SLOTS, DESK_ICONS, KEY_CHAR0, KEY_ENTER, KEY_ESC, STATE_VOCAB, text_ids
 from .tiles import ATLAS, BLUE, CHARSET, NEO_LOGO, VOCAB
 
@@ -44,56 +44,21 @@ def test_shell_files():
     assert 'terminal' not in o.z and not any(o.ext_state_fields()[4:8])
 
 
-def test_basic():
+def test_shell_unknown_commands():
     o = MicroOS(3)
     o.open_app('terminal')
-    command(o, 'BASIC')
-    b = o.term.basic
-    events = []
-    for text, expected in [
-        ('10 FOR I 1 TO 3\n20 RPT I .\n30 NEXT I', ['.', '..', '...', 'OK']),
-        ('10 LET I 2\n20 RPT I MOD 18 ADD 1 . I MOD 4', ['  ...', 'OK']),
-        ('', ['OK']),
-        ('10 PRINT 1 DIV 0', ['DIV BY ZERO IN 10', 'READY']),
-        ('10 GOTO 99', ['NO SUCH LINE 99', 'READY']),
-        ('10 NEXT I', ['NEXT WITHOUT FOR', 'READY']),
-        ('10 LET AB 3', ['SYNTAX ERROR IN 10', 'READY']),
-        ('10 FOR I 3 TO 1\n20 PRINT BAD\n30 NEXT I', ['OK'])]:
-        b.load(text)
-        o.term.lines = []
-        b.start(events)
-        while b.running: b.tick(events)
-        assert o.term.lines == expected, (text, o.term.lines)
-    b.load('10 GOTO 10')
-    b.start(events)
-    while b.running: b.tick(events)
-    assert o.term.lines[-2:] == ['OUT OF TIME', 'READY']
-    b.start(events)
-    o.step((0, 0, 0, 0))
-    obs = o.step((0, 0, 0, KEY_ESC))
-    assert 'basic_break' in obs['events']
-    command(o, 'NEW')
-    command(o, '10 PRINT HELLO')
-    command(o, 'SAVE HELLO.BAS')
-    assert o.texts['HELLO.BAS'] == '10 PRINT HELLO'
-    command(o, 'BYE')
-    command(o, 'RUN HELLO.BAS')
-    assert 'HELLO' in o.term.lines
-
-
-def test_stars():
-    o = MicroOS(6)
-    o.open_app('terminal')
-    assert o.pos['terminal'] == (12, 5)
-    o.term.lines = []
-    command(o, 'RUN C:/GAMES/STARS.BAS')
-    assert o.term.basic.running
-    while o.term.basic.running: o.step((0, 0, 0, 0))
-    output = [line for line in o.term.lines if '!' in line]
-    assert len(output) == 17
-    assert all(len(line) <= 36 for line in output)
-    assert output == output[::-1]
-    assert o.term.lines[-1] == 'OK'
+    assert 'term_cmd' not in command(o, '')['events']
+    for text in ['RUN', 'LIST', 'NEW', 'SAVE', 'LOAD', 'BYE', '10 PRINT HELLO']:
+        obs = command(o, text)
+        assert 'term_error' in obs['events']
+        assert o.term.lines[-1] == 'UNKNOWN COMMAND: ' + text.split()[0]
+        assert o.ext_state_fields()[4] == 0
+    command(o, 'BTOP')
+    assert o.ext_state_fields()[4] == 3
+    o.step((0, 0, 0, KEY_ESC))
+    assert o.focus == 'terminal' and o.ext_state_fields()[4] == 0
+    o.step((0, 0, 0, KEY_ESC))
+    assert 'terminal' not in o.z
 
 
 def test_desktop_selection_unique():
@@ -155,8 +120,7 @@ def test_neofetch():
 
 if __name__ == '__main__':
     test_shell_files()
-    test_basic()
-    test_stars()
     test_desktop_selection_unique()
+    test_shell_unknown_commands()
     test_neofetch()
     print('terminal regression checks passed')

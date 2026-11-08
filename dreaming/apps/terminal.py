@@ -1,6 +1,5 @@
 """Terminal shell sharing the desktop filesystem."""
 import re
-from .basic import Basic
 from .. import pictures as pics
 from ..tiles import ATLAS, CHARSET
 
@@ -14,7 +13,6 @@ class Terminal:
         self.history = []
         self.hist = 0
         self.mode = 0
-        self.basic = Basic(self)
         self.write('DREAM TERMINAL - HELP FOR COMMANDS')
 
     def write(self, text):
@@ -80,15 +78,8 @@ class Terminal:
                 self.mode = 0
                 events.append('btop_close')
             return
-        if self.basic.running:
-            if key == KEY_ESC:
-                self.basic.running = False
-                self.write(f'BREAK IN {self.basic.line}')
-                events.append('basic_break')
-            return
         if key == KEY_ESC:
-            if self.mode == 1: self.mode = 0; self.write('SHELL READY')
-            else: self.os.close_app('terminal', events)
+            self.os.close_app('terminal', events)
         elif key == KEY_DEL: self.input = self.input[:-1]
         elif key == KEY_UP and self.history:
             self.hist = max(0, self.hist - 1)
@@ -98,32 +89,14 @@ class Terminal:
             events.append('term_type')
         elif key == KEY_ENTER:
             source, self.input = self.input.strip(), ''
-            self.write(('BASIC>' if self.mode == 1 else self.cwd + '>') + source)
+            self.write(self.cwd + '>' + source)
             if source:
                 self.history = (self.history + [source])[-8:]
                 self.hist = len(self.history)
                 events.append('term_cmd')
                 try:
-                    if self.mode == 1: self.repl(source, events)
-                    else: self.command(source, events)
+                    self.command(source, events)
                 except ValueError as e: self.error(str(e), events)
-
-    def repl(self, source, events):
-        cmd, _, arg = source.partition(' ')
-        if cmd.isdigit(): self.basic.edit(source)
-        elif cmd == 'RUN': self.basic.start(events)
-        elif cmd == 'LIST':
-            for n in sorted(self.basic.program): self.write(f'{n} {self.basic.program[n]}')
-        elif cmd == 'NEW': self.basic.program = {}
-        elif cmd in ('BYE', 'EXIT'): self.mode = 0
-        elif cmd == 'SAVE':
-            if not arg: raise ValueError('USAGE: SAVE NAME.BAS')
-            self.write_file(arg, '\n'.join(f'{n} {s}' for n, s in sorted(self.basic.program.items())), events)
-        elif cmd == 'LOAD': self.basic.load(self.read(arg, 'LOAD'))
-        else:
-            self.basic.order = sorted(self.basic.program)
-            self.basic.pc = 0
-            self.basic.statement(source)
 
     def neofetch(self, wake, events):
         minutes = self.os.t // 60
@@ -155,7 +128,7 @@ class Terminal:
         def usage(n, hint):
             if len(args) != n: raise ValueError('USAGE: ' + cmd + ' ' + hint)
         if cmd == 'HELP':
-            self.write('LS CD PWD TREE FIND CAT HEAD TAIL\nWC GREP ECHO TOUCH CP MV RM\nMKDIR RMDIR DATE WHOAMI CLEAR\nBASIC RUN BTOP NEOFETCH EXIT')
+            self.write('LS CD PWD TREE FIND CAT HEAD TAIL\nWC GREP ECHO TOUCH CP MV RM\nMKDIR RMDIR DATE WHOAMI CLEAR\nBTOP NEOFETCH EXIT')
         elif cmd == 'NEOFETCH':
             if args not in ([], ['-WAKE']): raise ValueError('USAGE: NEOFETCH')
             self.neofetch(args == ['-WAKE'], events)
@@ -164,11 +137,6 @@ class Terminal:
         elif cmd == 'DATE': self.write(f'SUN NOV 08 2026 12:{self.os.t // 60 % 60:02}')
         elif cmd == 'CLEAR': self.lines = []; events.append('term_clear')
         elif cmd == 'EXIT': self.os.close_app('terminal', events)
-        elif cmd == 'BASIC': self.mode = 1; self.write('BASIC READY')
-        elif cmd == 'RUN':
-            usage(1, 'FILE.BAS')
-            self.basic.load(self.read(args[0], 'RUN'))
-            self.basic.start(events)
         elif cmd == 'BTOP': self.mode = 3; events.append('btop_open')
         elif cmd == 'CD':
             usage(1, 'PATH')
@@ -275,9 +243,6 @@ class Terminal:
             self.changed(events)
         else: raise ValueError('UNKNOWN COMMAND: ' + cmd)
 
-    def tick(self, events):
-        if self.basic.running: self.basic.tick(events)
-
     def render(self, g, wc, wr):
         from ..os_sim import put_text
         if self.mode == 3:
@@ -296,7 +261,7 @@ class Terminal:
                 cpu = min(99, metric(i) + (30 if name == 'DOOM' else 0))
                 put_text(g, wr + 8 + i, wc + 1, f'{i + 1:2} {name:14} {cpu:2} {metric(i + 9):2}', 'term')
             return
-        prompt = ('BASIC>' if self.mode == 1 else self.cwd + '>') + self.input + '_'
+        prompt = self.cwd + '>' + self.input + '_'
         tail = [prompt[i:i + 36] for i in range(0, len(prompt), 36)]
         lines = self.lines[-(12 - len(tail)):] + tail
         for i, line in enumerate(lines[-12:]):
