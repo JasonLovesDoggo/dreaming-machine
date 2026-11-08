@@ -2,13 +2,15 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import time
 
 import modal
 
 from dreaming.cluster import (check_budget, check_lock, config, lock_config, merge_metrics,
-                              run_with_deadline, torchrun_command, validate_run_id, write_json)
+                              publish_checkpoints, publish_set, run_with_deadline,
+                              torchrun_command, validate_run_id, write_json)
 
 RUN_ID = os.environ.get('DREAMING_RUN_ID', '')
 VOLUME_NAME = validate_run_id(RUN_ID)
@@ -28,9 +30,10 @@ OUT_DIR = f'/out/runs/{RUN_ID}'
 
 @app.function(image=image, volumes={'/out': out.read_only(), '/vol': data},
               cpu=1, memory=1024, timeout=300, max_containers=1)
-def mirror_metrics():
+def mirror_metrics(ckpts: list[str] | None = None):
     out.reload()
     merge_metrics(OUT_DIR, f'/vol/runs/{RUN_ID}/metrics.jsonl')
+    publish_checkpoints(OUT_DIR, f'/vol/runs/{RUN_ID}', ckpts or [])
     data.commit()
 
 
@@ -40,13 +43,18 @@ def mirror_metrics():
 def train_cluster(cfg: dict):
     start = time.time()
     cluster = modal.Cluster.from_context()
-    rank, ips = cluster.container_rank(), cluster.container_ips()
+    rank, ips = cluster.container_rank(), cluster.container_ips('ipv4')
     kill_at = min(cfg['deadline'], start + 8 * 3600) - 600
     env = dict(os.environ)
     env.setdefault('NCCL_SOCKET_IFNAME', 'eth0')
     env.setdefault('OMP_NUM_THREADS', '2')
     ledger_path = Path(OUT_DIR) / 'ledger.json'
-    records = []
+    records: list[dict] = []
+    publish_names = publish_set(cfg, cfg['start_iter'])
+
+    def ready():
+        return sorted(name for name in publish_names if (Path(OUT_DIR) / name).exists())
+
     if rank == 0:
         lock_config(OUT_DIR, cfg)
         records = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
@@ -57,17 +65,17 @@ def train_cluster(cfg: dict):
 
     def tick():
         out.commit()
-        mirror_metrics.spawn()
+        mirror_metrics.spawn(ready())
 
     try:
-        rc, timed_out = run_with_deadline(torchrun_command(cfg, rank, ips[0]), kill_at,
+        rc, timed_out = run_with_deadline(torchrun_command(cfg, rank, ips[0], cfg['resume']), kill_at,
                                           env=env, on_tick=tick if rank == 0 else None)
     finally:
         if rank == 0:
             records[-1]['end'] = time.time()
             write_json(ledger_path, records)
             out.commit()
-            mirror_metrics.remote()
+            mirror_metrics.remote(ready())
     return dict(rank=rank, returncode=rc, timed_out=timed_out, elapsed=time.time() - start)
 
 
@@ -90,15 +98,15 @@ def read_state():
     try:
         entries = {e.path.rsplit('/', 1)[-1] for e in volume.listdir(f'/runs/{RUN_ID}')}
     except modal.exception.NotFoundError:
-        return None, [], False
+        return None, [], False, None
 
     def read(name, default):
         return json.loads(b''.join(volume.read_file(f'/runs/{RUN_ID}/{name}'))) if name in entries else default
-    return read('launch.json', None), read('ledger.json', []), 'ckpt.pt' in entries
+    return read('launch.json', None), read('ledger.json', []), 'ckpt.pt' in entries, read('run.json', None)
 
 
 @app.local_entrypoint()
-def launch(phase: str = 'pilot', steps: int = 0, lr: float = 4e-4, warmup: int = 200,
+def launch(phase: str = 'first', steps: int = 0, lr: float = 4e-4, warmup: int = 200,
            iters: int = 65000, budget_hours: float = 8., dry_run: bool = False,
            min_lr_frac: float = 0.1, restart_iter: int = 5000, batch: int = 32,
            unroll: int = 6, data_path: str = '/vol/shards',
@@ -110,12 +118,16 @@ def launch(phase: str = 'pilot', steps: int = 0, lr: float = 4e-4, warmup: int =
                  batch=batch, unroll=unroll, data=data_path, extra_data=extra_data,
                  extra_frac=extra_frac, extra_shards=extra_shards,
                  holdout_episodes=holdout_episodes, source=source, total_cap_hours=total_cap_hours)
-    lock, records, resumed = read_state()
+    lock, records, resumed, marker = read_state()
     check_lock(cfg, lock)
     check_budget(records, budget_hours * 3600, total_cap_hours * 3600)
     cfg['deadline'] = time.time() + budget_hours * 3600
+    cfg['resume'] = 'auto' if resumed else source
+    if resumed and marker is None:
+        raise ValueError('checkpoint exists without run.json: cannot determine publication start')
+    cfg['start_iter'] = marker['iter'] if resumed else restart_iter
     print(json.dumps(cfg, indent=2))
-    print(shlex.join(torchrun_command(cfg, resume='auto' if resumed else source)))
+    print(shlex.join(torchrun_command(cfg, resume=cfg['resume'])))
     if not dry_run:
         print(train_cluster.remote(cfg))
 
@@ -128,3 +140,11 @@ def eval(ckpt_name: str = 'ckpt.pt'):
 @app.local_entrypoint()
 def mirror():
     mirror_metrics.remote()
+
+
+@app.local_entrypoint()
+def publish(ckpts: str):
+    names = ckpts.split(',')
+    if any(not re.fullmatch(r'ckpt_\d{6}\.pt', name) for name in names):
+        raise ValueError('use comma-separated numbered checkpoint basenames')
+    mirror_metrics.remote(names)

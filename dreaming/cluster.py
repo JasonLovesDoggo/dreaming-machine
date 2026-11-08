@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import time
 
@@ -25,9 +26,10 @@ def validate_run_id(run_id):
     return name
 
 
-def config(run_id, phase='pilot', steps=None, **overrides):
+def config(run_id, phase='first', steps=None, **overrides):
     validate_run_id(run_id)
-    presets = {'pilot': (300, 10, 2**63 - 1), 'gate': (700, 10, 1000), 'long': (10000, 25, 10000)}
+    presets = {'first': (1094, 10, 625), 'pilot': (300, 10, 2**63 - 1),
+               'gate': (700, 10, 1000), 'long': (10000, 25, 10000)}
     n, log, ckpt = presets[phase]
     cfg = dict(run_id=run_id, phase=phase, steps=n if steps is None else steps, log_every=log,
                ckpt_every=ckpt, lr=4e-4, warmup=200, min_lr_frac=0.1, restart_iter=5000,
@@ -143,8 +145,7 @@ def merge_metrics(src, dst):
     src, dst = Path(src), Path(dst)
     if dst.name != 'metrics.jsonl':
         raise ValueError('destination must be metrics.jsonl')
-    if dst.parent.exists() and any(p.name not in {'metrics.jsonl', 'metrics.jsonl.tmp'} for p in dst.parent.iterdir()):
-        raise ValueError('refusing to mirror into non-metrics run')
+    validate_publish_dir(dst.parent)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name('metrics.jsonl.tmp')
     with tmp.open('wb') as target:
@@ -155,3 +156,40 @@ def merge_metrics(src, dst):
                 if data and not data.endswith(b'\n'):
                     target.write(b'\n')
     os.replace(tmp, dst)
+
+
+def validate_publish_dir(path):
+    path = Path(path)
+    validate_run_id(path.name)
+    if path.is_symlink() or (path.exists() and any(
+            p.is_symlink() or not p.is_file() or not re.fullmatch(
+                r'(metrics\.jsonl|run\.json|ckpt_\d{6}\.pt)(\.tmp)?', p.name)
+            for p in path.iterdir())):
+        raise ValueError('refusing to mirror into non-metrics run with foreign files')
+
+
+def publish_checkpoints(src, dst, names):
+    src, dst = Path(src), Path(dst)
+    validate_publish_dir(dst)
+    for name in names:
+        if not re.fullmatch(r'ckpt_\d{6}\.pt', name):
+            raise ValueError('invalid numbered checkpoint name')
+        if not (src / name).is_file() or (src / name).is_symlink():
+            raise ValueError(f'checkpoint does not exist: {name}')
+    if not names:
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        tmp = dst / (name + '.tmp')
+        shutil.copyfile(src / name, tmp)
+        os.replace(tmp, dst / name)
+    maximum = max(int(p.stem[5:]) for p in dst.glob('ckpt_??????.pt')
+                  if re.fullmatch(r'ckpt_\d{6}\.pt', p.name))
+    write_json(dst / 'run.json', dict(atlas_version=2, iter=maximum))
+
+
+def publish_set(cfg, start):
+    end = min(start + cfg['steps'], cfg['iters'])
+    cadence = cfg['ckpt_every']
+    return {f'ckpt_{it:06d}.pt' for it in
+            [*range((start // cadence + 1) * cadence, end + 1, cadence), end] if it > start}
