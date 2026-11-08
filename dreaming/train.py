@@ -73,6 +73,27 @@ def shard_mode(path):
     return next((m for m in ['doom', 'cards', 'windows', 'calculator', 'terminal', 'dreamer', 'cats'] if m in name), 'mixed')
 
 
+def partition_shards(paths, rank, world):
+    if world < 1 or not 0 <= rank < world:
+        raise ValueError('shard partition requires world >= 1 and 0 <= rank < world')
+    if not paths:
+        raise ValueError('shard partition would give every rank zero shards')
+    if len(paths) < world:
+        return paths
+    modes = {}
+    for path in paths:
+        modes.setdefault(shard_mode(path), []).append(path)
+    partitions = [[] for _ in range(world)]
+    counter = 0
+    for mode in sorted(modes):
+        for path in sorted(modes[mode]):
+            partitions[counter % world].append(path)
+            counter += 1
+    if any(not part for part in partitions):
+        raise ValueError('shard partition would give a rank zero shards')
+    return partitions[rank]
+
+
 class MixedWindows:
     def __init__(self, primary, extra, frac):
         self.primary, self.extra, self.frac = primary, extra, frac
@@ -175,7 +196,7 @@ def setup_distributed():
 
 def load_data(a, rank, world):
     paths = sorted(glob.glob(os.path.join(a.data, '*.npz')))
-    paths = paths[rank::world] if len(paths) >= world else paths
+    paths = partition_shards(paths, rank, world)
     t0 = time.time()
     def windows(paths, seed, mode_mix=None):
         data = load_training_shards(paths, a.max_steps_data or None, a.holdout_episodes)
@@ -189,7 +210,7 @@ def load_data(a, rank, world):
         if not 0 <= a.extra_frac <= 1 or not 1 <= a.extra_shards <= 40:
             raise ValueError('extra fraction must be in [0,1] and shard cap in [1,40]')
         extra = sorted(glob.glob(os.path.join(a.extra_data, '*.npz')))[:-1][:a.extra_shards]
-        extra = extra[rank::world] if len(extra) >= world else extra
+        extra = partition_shards(extra, rank, world)
         win = MixedWindows(win, windows(extra, 5678 + rank), a.extra_frac)
     return win
 

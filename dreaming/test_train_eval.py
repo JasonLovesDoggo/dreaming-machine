@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -8,7 +10,7 @@ from .eval import HELDOUT_SEED_BASE, changed_transition_counts, evaluate_mode, f
 from .model import Config, WorldModel
 from .os_sim import STATE_VOCAB
 from .tiles import ATLAS
-from .train import MixedWindows, Windows, load_data, load_training_shards, to_torch, unroll_loss
+from .train import MixedWindows, Windows, load_data, load_training_shards, partition_shards, shard_mode, to_torch, unroll_loss
 
 
 def dataset():
@@ -121,6 +123,39 @@ def test_extra_shards_partitioned_per_rank(tmp_path, world, extra_count, cap):
         assert set(win.extra.d['cursor'][:, 0]) == set(expected)
         assert len(win.extra.d['action']) == 40 * len(expected)
         assert len(win.primary.d['action']) == 40
+
+
+def test_partition_shards_real_filenames():
+    listing = Path('/home/ubuntu/audit/ab/shards_listing.json')
+    if not listing.exists():
+        pytest.skip('real Modal shard listing is only available in the audit environment')
+    paths = sorted(row['filename'] for row in json.loads(listing.read_text())
+                   if row['filename'].endswith('.npz'))
+    assert len(paths) == 1160
+    modes = {shard_mode(path) for path in paths}
+    partitions = [partition_shards(paths, rank, 24) for rank in range(24)]
+    combined = [path for part in partitions for path in part]
+    assert len(combined) == len(set(combined)) == len(paths)
+    assert set(combined) == set(paths)
+    for part in partitions:
+        assert part
+        assert {shard_mode(path) for path in part} == modes
+
+
+def test_partition_shards_remainders_and_fallback():
+    paths = [f'shard_{mode}_{i:05d}.npz' for mode in ('doom', 'cards') for i in range(3)]
+    partitions = [partition_shards(paths[::-1], rank, 4) for rank in range(4)]
+    assert [len(part) for part in partitions] == [2, 2, 1, 1]
+    assert {path for part in partitions for path in part} == set(paths)
+    for mode in ('doom', 'cards'):
+        counts = [sum(shard_mode(path) == mode for path in part) for part in partitions]
+        assert max(counts) - min(counts) <= 1
+    for rank in range(8):
+        assert partition_shards(paths, rank, 8) == paths
+    with pytest.raises(ValueError, match='zero shards'):
+        partition_shards([], 0, 4)
+    with pytest.raises(ValueError, match='0 <= rank < world'):
+        partition_shards(paths, 4, 4)
 
 
 def test_reserved_heldout_seeds():
