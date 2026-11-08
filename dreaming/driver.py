@@ -8,7 +8,7 @@ from .tiles import CHAR_IDX
 from .pictures import KEYWORDS, IMAGE_EXTS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
-from .apps.dreamer import PROMPTS
+from .apps.dreamer import prompts
 
 TASK_EVENTS = {
     'explorer': ['ex_open_folder', 'ex_delete', 'ex_restore', 'ex_empty_trash', 'ex_open_png', 'ex_up', 'ex_select'],
@@ -554,12 +554,25 @@ class Driver:
             return
         for _ in range(self.rng.randint(2, 6)):
             yield from self.press_key(KEY_ENTER)
-            yield from self.type_text(self.rng.choice(PROMPTS))
+            prompt = self.rng.choice(prompts())[:150]
+            messy = self.rng.random()
+            if messy < 0.1:
+                prompt = ''.join(self.rng.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ') for _ in range(self.rng.randint(1, 30)))
+            elif messy < 0.25 and len(prompt) > 3:
+                i = self.rng.randrange(len(prompt) - 1)
+                prompt = prompt[:i] + prompt[i + 1] + prompt[i] + prompt[i + 2:]
+            elif messy < 0.35:
+                prompt = prompt[:self.rng.randint(1, len(prompt))]
+            elif messy < 0.45:
+                prompt = prompt + '!!!'
+            yield from self.type_text(prompt)
             if self.rng.random() < 0.3:
                 yield from self.type_text('X')
                 yield from self.press_key(KEY_DEL)
             yield from self.press_key(KEY_ENTER)
-            yield from self.idle(65)
+            while self.os.chat.pending:
+                yield from self.idle(4)
+            yield from self.idle(self.rng.randint(12, 35))
             if self.rng.random() < 0.3:
                 yield from self.press_key(KEY_UP, 3)
                 yield from self.press_key(KEY_DOWN, 3)

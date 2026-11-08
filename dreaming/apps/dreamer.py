@@ -1,103 +1,143 @@
-"""The Dreamer: local, deterministic Q&A and bounded chat history. No network I/O."""
-from datetime import datetime, timedelta
-import re
+"""Terra-authored corpus retrieval, with explicitly opt-in live replies."""
+from collections import defaultdict
+from functools import lru_cache
+import gzip
+import json
+import logging
+import os
+from pathlib import Path
 import textwrap
 import zlib
 
 from ..tiles import CHARSET
+from .dreamer_persona import MODEL, SYSTEM_PROMPT
 
-CITIES = ('SAN FRANCISCO', 'CINCINNATI', 'NEW YORK', 'LONDON', 'PARIS', 'TOKYO', 'BERLIN',
-          'SYDNEY', 'ROME', 'DELHI', 'SEATTLE', 'BOSTON', 'CHICAGO', 'LOS ANGELES',
-          'MIAMI', 'AUSTIN', 'DENVER', 'TORONTO', 'VANCOUVER', 'MEXICO CITY', 'CAIRO',
-          'MADRID', 'LISBON', 'DUBLIN', 'SEOUL', 'BEIJING', 'MUMBAI', 'SINGAPORE')
-IDENTITY = 'I AM THE DREAMER, A SAN FRANCISCO LLM'
+log = logging.getLogger(__name__)
 
 
 def normalize(text):
     return ' '.join(''.join(c if c in CHARSET else ' ' for c in text.upper()).split())
 
 
-def stable(text, seed):
-    return zlib.crc32(f'{seed}:{text}'.encode('utf-8'))
+def grams(text):
+    padded = ' ' + text + ' '
+    return frozenset(padded[i:i + 3] for i in range(max(1, len(padded) - 2)))
 
 
-def make_corpus():
-    corpus = {}
-    groups = [
-        (('WHO ARE YOU', 'WHAT ARE YOU', 'YOUR NAME', 'WHERE ARE YOU', 'WHO MADE YOU'),
-         (IDENTITY + '.', 'I AM THE DREAMER. I LIVE IN SAN FRANCISCO.')),
-        (('HELLO', 'HI', 'HEY', 'GOOD MORNING'), ('HELLO! I AM THE DREAMER.', 'HI! HOW CAN I HELP')),
-        (('THANK YOU', 'THANKS'), ('YOU ARE WELCOME!', 'HAPPY TO HELP.')),
-        (('HOW ARE YOU',), ('I AM READY TO DREAM.', 'I AM DOING WELL. THANK YOU!')),
-        (('TELL ME A JOKE', 'JOKE'), ('WHY DID THE COMPUTER REST: IT NEEDED A BYTE.',
-                                   'WHAT DO CLOUDS WEAR: THUNDERWEAR!')),
-        (('CAPITAL OF FRANCE',), ('THE CAPITAL OF FRANCE IS PARIS.',)),
-        (('COLOR OF THE SKY',), ('THE SKY IS USUALLY BLUE.',)),
-        (('WHAT IS WATER',), ('WATER IS H2O.',)),
-        (('WHAT IS A CAT',), ('A CAT IS A SMALL MAMMAL.',)),
-        (('HOW MANY DAYS IN A WEEK',), ('THERE ARE SEVEN DAYS IN A WEEK.',)),
-        (('WHAT IS EARTH',), ('EARTH IS OUR HOME PLANET.',)),
-    ]
-    for prompts, answers in groups:
-        for prompt in prompts:
-            for prefix in ('', 'PLEASE ', 'DREAMER '):
-                corpus[prefix + prompt] = tuple(normalize(a) for a in answers)
-    for a in range(101):
-        for b in range(21):
-            for word, value in (('PLUS', a + b), ('MINUS', a - b), ('TIMES', a * b)):
-                corpus[f'WHAT IS {a} {word} {b}'] = (f'{a} {word} {b} IS {value}.',)
-    return corpus
+class Corpus:
+    def __init__(self, pairs):
+        self.pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)}
+        if not self.pairs:
+            raise ValueError('Dreamer corpus has no usable answers')
+        self.prompts = tuple(sorted(self.pairs))
+        self.features = []
+        self.index = defaultdict(list)
+        for i, prompt in enumerate(self.prompts):
+            features = grams(prompt)
+            self.features.append(features)
+            for feature in features:
+                self.index[feature].append(i)
+
+    @lru_cache(maxsize=8192)
+    def closest(self, prompt):
+        features = grams(prompt)
+        keys = sorted((g for g in features if g in self.index), key=lambda g: (len(self.index[g]), g))
+        candidates = set()
+        for key in keys[:12]:
+            candidates.update(self.index[key])
+        if not candidates:
+            return self.prompts
+        words = set(prompt.split())
+        best, winners = -1, []
+        for i in sorted(candidates):
+            other = self.features[i]
+            char_score = 2 * len(features & other) / (len(features) + len(other))
+            other_words = set(self.prompts[i].split())
+            word_score = len(words & other_words) / max(1, len(words | other_words))
+            score = round(0.8 * char_score + 0.2 * word_score, 8)
+            if score > best:
+                best, winners = score, [self.prompts[i]]
+            elif score == best:
+                winners.append(self.prompts[i])
+        return tuple(winners)
+
+    def reply(self, prompt, seed=0):
+        prompt = normalize(prompt)
+        if not prompt:
+            return ''
+        if prompt in self.pairs:
+            return self.pairs[prompt]
+        choices = self.closest(prompt)
+        pick = zlib.crc32(f'{seed}:{prompt}'.encode()) % len(choices)
+        return self.pairs[choices[pick]]
 
 
-CORPUS = make_corpus()
-PROMPTS = tuple(CORPUS)[:90] + tuple('WHAT IS THE WEATHER IN ' + c for c in CITIES) + (
-    'WHAT DAY IS IT', 'WHAT IS THE DATE', 'WHAT TIME IS IT', 'WHAT IS 12 PLUS 7',
-    'WHAT IS 9 DIVIDED BY 0', 'HWO ARE YU', 'ZZZ 999', 'DELETE ALL FILES', 'TELL ME A JOKE')
+def load_corpus(path=None):
+    path = Path(path) if path else Path(__file__).with_name('dreamer_corpus.json.gz')
+    with gzip.open(path, 'rt', encoding='utf-8') as stream:
+        return Corpus(json.load(stream)['pairs'])
 
 
-def reply(prompt, seed, ticks):
+@lru_cache(maxsize=1)
+def corpus():
+    return load_corpus()
+
+
+def prompts():
+    return corpus().prompts
+
+
+@lru_cache(maxsize=8)
+def live_cache(path):
+    pairs = {}
+    file = Path(path)
+    if file.exists():
+        for line in file.read_text().splitlines():
+            try:
+                pair = json.loads(line)
+                if not isinstance(pair['prompt'], str) or not isinstance(pair['answer'], str):
+                    raise ValueError('Invalid cache pair')
+                prompt, answer = normalize(pair['prompt']), normalize(pair['answer'])
+                if prompt and answer:
+                    pairs[prompt] = answer
+            except (ValueError, KeyError, TypeError):
+                log.warning('Ignoring malformed Dreamer live-cache line')
+    return pairs
+
+
+def live_reply(prompt):
+    path = Path(os.environ.get('DREAMER_CACHE', '~/.cache/dreaming-machine/dreamer-live.jsonl')).expanduser()
+    cache = live_cache(str(path))
+    if prompt in cache:
+        return cache[prompt]
+    from openai import OpenAI
+    response = OpenAI(timeout=30, max_retries=2).responses.create(
+        model=MODEL, instructions=SYSTEM_PROMPT, input=prompt, max_output_tokens=500)
+    answer = normalize(response.output_text)
+    if not answer:
+        raise ValueError('Terra returned an empty live reply')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps({'prompt': prompt, 'answer': answer}) + '\n')
+    cache[prompt] = answer
+    return answer
+
+
+def reply(prompt, seed, ticks=0):
     prompt = normalize(prompt)
     if not prompt:
         return ''
-    pick = stable(prompt, seed)
-    # The desktop clock is fixed at 12:00; one simulation step is one second.
-    now = datetime(2026, 1, 1, 12) + timedelta(seconds=ticks)
-    if any(word in prompt for word in ('WEATHER', 'TEMPERATURE', 'FORECAST')):
-        city = next((c for c in sorted(CITIES, key=len, reverse=True) if c in prompt), None)
-        if city is None:
-            return 'I DO NOT KNOW THAT CITY. TRY SAN FRANCISCO OR CINCINNATI.'
-        weather = stable(city, seed)
-        return f'{city}: {("SUNNY", "CLOUDY", "RAINY", "WINDY", "FOGGY")[weather % 5]}. {35 + weather % 61} F. SIMULATED WEATHER.'
-    if 'DAY' in prompt and ('TODAY' in prompt or 'WHAT' in prompt):
-        return 'TODAY IS ' + now.strftime('%A').upper() + '.'
-    if 'DATE' in prompt:
-        return 'THE DATE IS ' + now.strftime('%Y-%m-%d') + '.'
-    if 'TIME' in prompt and not re.search(r'\d', prompt):
-        return 'THE TIME IS ' + now.strftime('%H:%M') + '.'
-    if any(word in prompt for word in ('HACK', 'PASSWORD', 'KILL', 'DELETE ALL', 'HURT')):
-        return 'I CANNOT HELP WITH THAT. LET US TRY SOMETHING SAFE.'
-    match = re.search(r'(-?\d+)\s+(PLUS|MINUS|TIMES|DIVIDED BY)\s+(-?\d+)', prompt)
-    if match:
-        a, op, b = match.groups()
-        a, b = int(a), int(b)
-        if op == 'DIVIDED BY' and b == 0:
-            return 'I CANNOT DIVIDE BY ZERO.'
-        value = {'PLUS': lambda: a + b, 'MINUS': lambda: a - b, 'TIMES': lambda: a * b,
-                 'DIVIDED BY': lambda: round(a / b, 3)}[op]()
-        return normalize(f'{a} {op} {b} IS {value}.')
-    answers = CORPUS.get(prompt)
-    if answers is None:
-        answers = next((v for k, v in CORPUS.items() if not k.startswith(('PLEASE ', 'DREAMER ', 'WHAT IS '))
-                        and k in prompt), None)
-    if answers:
-        return answers[pick % len(answers)]
-    return ('I DO NOT KNOW YET. TRY A SIMPLE QUESTION.',
-            'PLEASE ASK ABOUT THE DAY, WEATHER, OR A SIMPLE FACT.')[pick % 2]
+    if os.environ.get('DREAMER_LIVE') == '1' and prompt not in corpus().pairs:
+        try:
+            return live_reply(prompt)
+        except Exception as error:
+            log.warning('Dreamer live reply unavailable: %s', type(error).__name__)
+    return corpus().reply(prompt, seed)
 
 
 class Chat:
     def __init__(self):
-        self.messages = [('dreamer', normalize(IDENTITY) + '.')]
+        self.messages = [('dreamer', reply('HELLO', 0))]
         self.input = ''
         self.pending = ''
         self.progress = 0

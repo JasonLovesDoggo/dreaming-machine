@@ -82,11 +82,11 @@ ICON_ART = {
              ".rrwwkkwwkkwwrr.", ".rrwwkkwwkkwwrr.", ".rrwwwwwwwwwwrr.", ".rrrwwwkkwwwrrr.", ".rrrrwwwwwwrrrr.",
              ".rrrrwkwkwkrrrr.", ".rrrrwwwwwwrrrr.", ".rrrrrrrrrrrrrr.", "................", "................", "................"],
 }
-ICON_ART['dreamer'] = ['................', '.bbbbbbbbbbbbbb.', '.bwwwwwwwwwwwwb.',
-                       '.bwbbbbbbbbbbwb.', '.bwwwwwwwwwwwwb.', '.bwbbbbbbbbbbwb.',
-                       '.bwwwwwwwwwwwwb.', '.bwbbbbbbbbbbwb.', '.bwwwwwwwwwwwwb.',
-                       '.bbbbbbbbbbbbbb.', '....bb..........', '...bb...........',
-                       '..bb............', '................', '................', '................']
+ICON_ART['dreamer'] = ['wwwwwwwwwwwwwwww', 'wwwwwwkkwwwwwwww', 'wwwwwkwwkkkkwwww',
+                       'wwwwkwwwkwwwkwww', 'wwwkkwkwwwwwwkww', 'wwkwkwkwkkkkwkww',
+                       'wkwwkwkkkwwwkkww', 'wkwwkwkwwkkwwkww', 'wwkwwkkwwkwkwwkw',
+                       'wwkkwwwkkkwkwwkw', 'wwkwkkkkwkwkwkww', 'wwkwwwwwwkwkkkww',
+                       'wwwkwwwkwwwkwwww', 'wwwwkkkkwwkwwwww', 'wwwwwwwkkkwwwwww', 'wwwwwwwwwwwwwwww']
 ART_COLORS = {'o': TAN, 'y': YELLOW, 'd': DGRAY, 'g': LGRAY, 'k': K, 's': BLUE, 'G': GREEN, 'r': RED, 'b': BLUE,
               'w': WHITE}
 MINI_ART = {
