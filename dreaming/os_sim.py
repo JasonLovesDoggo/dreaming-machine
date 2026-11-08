@@ -6,8 +6,9 @@ from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, gr
                     NCH, CHARSET)
 from . import doom as dm
 from . import pictures as pics
+from .apps import dreamer
 
-APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13)}
+APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13), 'dreamer': (24, 18)}
 APPS = list(APP_SIZES)
 # Fixed OS-state slots: existing apps keep their slot forever; new apps take a reserved one (never reorder).
 APP_SLOTS = ['explorer', 'paint', 'cards', 'doom', 'notepad', 'calculator', 'terminal', 'dreamer', 'flight', 'spare']
@@ -15,7 +16,9 @@ assert all(a in APP_SLOTS for a in APPS)
 FOCUS_COL = 3 * len(APP_SLOTS)
 EXT_FIELDS, EXT_VOCAB = 16, 32  # spare per-app state fields at the end of the state vector
 APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM', 'notepad': 'NOTEPAD'}
+APP_TITLES['dreamer'] = 'DREAMER'
 DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6)}
+DEFAULT_POS['dreamer'] = (7, 3)
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
 KEY_CHAR0 = 9  # typed characters: KEY_CHAR0 + index into CHARSET (space = 9)
 NKEYS = KEY_CHAR0 + NCH
@@ -23,7 +26,7 @@ NP_COLS, NP_ROWS, NP_MAX = 32, 10, 600
 DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('explorer', 'TRASH')),
               ('picture', 'PICS', ('explorer', 'C:/PICS')), ('paint', 'PAINT', ('paint', None)),
               ('cards', 'CARDS', ('cards', None)), ('doom', 'DOOM', ('doom', None)),
-              ('notepad', 'NOTES', ('notepad', None))]
+              ('notepad', 'NOTES', ('notepad', None)), ('dreamer', 'DREAM', ('dreamer', None))]
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
@@ -102,6 +105,7 @@ class MicroOS:
         self.new_doc = 1
         self.deal_no = 0
         self.doom = dm.Doom()
+        self.chat = dreamer.Chat()
         self._reset_app('explorer'); self._reset_app('paint'); self._reset_app('cards'); self._reset_app('notepad')
         return self.observe([])
 
@@ -136,6 +140,8 @@ class MicroOS:
             self.np_text = self.texts.get(arg, '') if arg else ''
         elif app == 'doom':
             self.doom.reset()
+        elif app == 'dreamer':
+            self.chat = dreamer.Chat()
 
     @property
     def focus(self):
@@ -222,6 +228,8 @@ class MicroOS:
             if self.pt_load == 10:
                 events.append('paint_loaded')
         self.btn = btn
+        if 'dreamer' in self.z and self.chat.tick():
+            events.append('dreamer_reply')
         self.t += 1
         return self.observe(events)
 
@@ -280,6 +288,20 @@ class MicroOS:
             return
         if key == KEY_ESC and app:
             self.close_app(app, events)
+        elif app == 'dreamer':
+            if key == KEY_ENTER:
+                if self.chat.send(self.seed, self.t):
+                    events.append('dreamer_send')
+            elif key == KEY_DEL:
+                self.chat.input = self.chat.input[:-1]
+                events.append('dreamer_backspace')
+            elif key == KEY_UP:
+                self.chat.scroll = min(self.chat.scroll + 1, max(0, len(self.chat.lines()) - 14))
+            elif key == KEY_DOWN:
+                self.chat.scroll = max(0, self.chat.scroll - 1)
+            elif KEY_CHAR0 <= key < NKEYS and len(self.chat.input) < 160:
+                self.chat.input += CHARSET[key - KEY_CHAR0]
+                events.append('dreamer_type')
         elif app == 'notepad':
             if key >= KEY_CHAR0 and len(self.np_text) < NP_MAX:
                 self.np_text += CHARSET[key - KEY_CHAR0]
@@ -645,6 +667,9 @@ class MicroOS:
     def _press_doom(self, mx, my, lc, lr, dbl, events):
         pass
 
+    def _press_dreamer(self, mx, my, lc, lr, dbl, events):
+        pass
+
     # ------------------------------------------------------------------ render
     def render_grid(self):
         g = np.full((GH, GW), ATLAS[('solid', 'desk')], np.int32)
@@ -765,6 +790,14 @@ class MicroOS:
             wc, wr, w, h = self._frame(g, app, 'DOOM', 'body')
             g[wr + 1:wr + 16, wc + 1:wc + 21] = ATLAS[('doom_view',)]
             put_text(g, wr + 16, wc + 1, self.doom.hud_text().center(40), 'hud')
+        elif app == 'dreamer':
+            wc, wr, w, h = self._frame(g, app, 'THE DREAMER', 'body')
+            lines = self.chat.lines()
+            end = max(0, len(lines) - self.chat.scroll)
+            for i, (ctx, line) in enumerate(lines[max(0, end - 14):end]):
+                put_text(g, wr + 1 + i, wc + 1, line.ljust(44), ctx)
+            put_text(g, wr + 15, wc + 1, ('TYPING...' if self.chat.pending else 'ENTER SEND  UP/DOWN HISTORY').ljust(44), 'tool')
+            put_text(g, wr + 16, wc + 1, ('> ' + self.chat.input[-41:] + '_').ljust(44), 'body')
         elif app == 'notepad':
             wc, wr, w, h = self._frame(g, app, 'NOTEPAD' + (' - ' + self.np_file if self.np_file else ''), 'body')
             self._toolbar(g, wc, wr, w, [(1, 'NEW'), (4, 'SAVE')])
@@ -786,7 +819,12 @@ class MicroOS:
 
     def ext_state_fields(self):
         """Spare state fields for new apps; each app claims a fixed sub-range and leaves the rest zero."""
-        return [0] * EXT_FIELDS
+        fields = [0] * EXT_FIELDS
+        # Dreamer owns ext fields 8:12; all values fit EXT_VOCAB.
+        if 'dreamer' in self.z:
+            fields[8:12] = [int(bool(self.chat.pending)), min(31, self.chat.progress // 4),
+                            min(31, self.chat.scroll), len(self.chat.messages)]
+        return fields
 
     def state_vector(self):
         f = []
@@ -809,7 +847,7 @@ class MicroOS:
         return np.array(f, np.uint8)
 
 
-STATE_VOCAB = [2, 32, 24] * len(APP_SLOTS) + [len(APP_SLOTS) + 1, 2, 2, 10, 8, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
+STATE_VOCAB = [2, 32, 24] * len(APP_SLOTS) + [len(APP_SLOTS) + 1, 2, 2, 10, max(8, len(DESK_ICONS) + 1), 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
                                  2, 8, 11, 16, 12, 16, 11, 11, 10] + [EXT_VOCAB] * EXT_FIELDS
 
 

@@ -8,6 +8,7 @@ from .tiles import CHAR_IDX
 from .pictures import KEYWORDS, IMAGE_EXTS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
+from .apps.dreamer import PROMPTS
 
 TASK_EVENTS = {
     'explorer': ['ex_open_folder', 'ex_delete', 'ex_restore', 'ex_empty_trash', 'ex_open_png', 'ex_up', 'ex_select'],
@@ -19,6 +20,7 @@ TASK_EVENTS = {
     'images': ['ex_new_file', 'paint_loaded'],
     'noise': ['desk_select'],
     'chaos': [],
+    'dreamer': ['dreamer_send', 'dreamer_reply', 'dreamer_type', 'dreamer_backspace'],
 }
 UNKNOWN_WORDS = "IMG PHOTO TRIP MEME ART PIC SCAN WALLPAPER DOODLE BEST OLD THING STUFF".split()
 WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHIP IT NOW GPU MODEL TRAIN PLAY CARDS "
@@ -26,6 +28,7 @@ WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHI
          "COFFEE PIZZA TONIGHT REMEMBER TO WATER PLANTS SOLITAIRE HIGH SCORE KILLS AMMO HP LOVE THIS COMPUTER "
          "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
 BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0}
+BASE_W['dreamer'] = 1.5
 
 
 class Driver:
@@ -545,6 +548,22 @@ class Driver:
         if r.random() < 0.3:
             yield from self.close('notepad')
 
+    def task_dreamer(self):
+        yield from self.open_app('dreamer')
+        if self.os.focus != 'dreamer':
+            return
+        for _ in range(self.rng.randint(2, 6)):
+            yield from self.press_key(KEY_ENTER)
+            yield from self.type_text(self.rng.choice(PROMPTS))
+            if self.rng.random() < 0.3:
+                yield from self.type_text('X')
+                yield from self.press_key(KEY_DEL)
+            yield from self.press_key(KEY_ENTER)
+            yield from self.idle(65)
+            if self.rng.random() < 0.3:
+                yield from self.press_key(KEY_UP, 3)
+                yield from self.press_key(KEY_DOWN, 3)
+
     def make_name(self):
         r = self.rng
         kws = list(KEYWORDS)
@@ -745,7 +764,7 @@ class Driver:
         while True:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
-                            'windows': self.task_windows_deep}[self.mode]()
+                            'windows': self.task_windows_deep, 'dreamer': self.task_dreamer}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
             task = self.choose_task()

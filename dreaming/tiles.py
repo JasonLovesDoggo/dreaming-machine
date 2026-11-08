@@ -46,6 +46,7 @@ GLYPHS = np.array([[[c == '#' for c in row] for row in FONT3[ch]] for ch in CHAR
 TEXT_CTX = {
     'title': (WHITE, NAVY), 'title_in': (LGRAY, DGRAY), 'body': (K, WHITE), 'sel': (WHITE, BLUE),
     'tool': (K, LGRAY), 'desk': (WHITE, TEAL), 'hud': (RED, K),
+    'dreamer': (WHITE, NAVY),
 }
 CTX_NAMES = list(TEXT_CTX)
 
@@ -81,6 +82,11 @@ ICON_ART = {
              ".rrwwkkwwkkwwrr.", ".rrwwkkwwkkwwrr.", ".rrwwwwwwwwwwrr.", ".rrrwwwkkwwwrrr.", ".rrrrwwwwwwrrrr.",
              ".rrrrwkwkwkrrrr.", ".rrrrwwwwwwrrrr.", ".rrrrrrrrrrrrrr.", "................", "................", "................"],
 }
+ICON_ART['dreamer'] = ['................', '.bbbbbbbbbbbbbb.', '.bwwwwwwwwwwwwb.',
+                       '.bwbbbbbbbbbbwb.', '.bwwwwwwwwwwwwb.', '.bwbbbbbbbbbbwb.',
+                       '.bwwwwwwwwwwwwb.', '.bwbbbbbbbbbbwb.', '.bwwwwwwwwwwwwb.',
+                       '.bbbbbbbbbbbbbb.', '....bb..........', '...bb...........',
+                       '..bb............', '................', '................', '................']
 ART_COLORS = {'o': TAN, 'y': YELLOW, 'd': DGRAY, 'g': LGRAY, 'k': K, 's': BLUE, 'G': GREEN, 'r': RED, 'b': BLUE,
               'w': WHITE}
 MINI_ART = {
