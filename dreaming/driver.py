@@ -4,7 +4,7 @@ import random
 from collections import Counter
 from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, KEY_UP, KEY_DOWN,
                      KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
-from .tiles import CHARSET, CHAR_IDX
+from .tiles import CHAR_IDX
 from .pictures import KEYWORDS, IMAGE_EXTS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
@@ -29,8 +29,9 @@ BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1
 
 
 class Driver:
-    def __init__(self, os_, seed):
+    def __init__(self, os_, seed, mode='mixed'):
         self.os = os_
+        self.mode = mode
         self.rng = random.Random(seed)
         self.x, self.y = SCREEN_W // 2, SCREEN_H // 2
         self.btn = 0
@@ -364,21 +365,33 @@ class Driver:
                     moves.append((3, ('waste',), ('tab', k2)))
         return moves
 
-    def task_cards(self):
+    def task_cards(self, full=False):
         r = self.rng
         yield from self.open_app('cards')
         if 'cards' not in self.os.z:
             return
-        for _ in range(r.randint(5, 30)):
+        idle_draws, last = 0, None
+        for _ in range(r.randint(150, 400) if full else r.randint(5, 30)):
             if 'cards' not in self.os.z:
                 return
             yield from self.ensure_focus('cards')
             o = self.os
             if o.c_won:
+                yield from self.idle(r.randint(5, 30))
                 yield from self.click(*self.card_xy('stock'))
+                idle_draws = 0
                 continue
             moves = self.cards_moves()
-            if r.random() < 0.08 or (not moves and r.random() < 0.1):
+            if full:
+                sig = (sum(len(f) for f in o.found), sum(up for col in o.tab for _, up in col))
+                idle_draws = idle_draws + 1 if sig == last else 0
+                last = sig
+                if idle_draws > 2 * (len(o.stock) + len(o.waste)) + 6:
+                    yield from self.close('cards')
+                    yield from self.open_app('cards')
+                    idle_draws, last = 0, None
+                    continue
+            if r.random() < (0.02 if full else 0.08) or (not moves and r.random() < 0.1):
                 k = r.randrange(7)
                 yield from self.click(*self.card_xy('tab', k, max(0, len(o.tab[k]) - 1)))
                 yield from self.click(*self.card_xy('tab', r.randrange(7), 0))
@@ -404,15 +417,36 @@ class Driver:
             else:
                 yield from self.click(*self.card_xy('stock'))
             yield from self.idle(r.randint(0, 4))
-        if r.random() < 0.25:
+        if r.random() < (0.05 if full else 0.25):
             yield from self.close('cards')
 
-    def task_doom(self):
+    def _doom_waypoint_key(self, d):
+        if self._wp is None or math.hypot(self._wp[0] - d.px, self._wp[1] - d.py) < 0.8 or self._wp_age > 300:
+            free = [(x + 0.5, y + 0.5) for y, row in enumerate(dm.MAP) for x, c in enumerate(row) if c == '.']
+            far = [p for p in free if math.hypot(p[0] - d.px, p[1] - d.py) > 5] or free
+            self._wp, self._wp_age = self.rng.choice(far), 0
+        self._wp_age += 1
+        tx, ty = self._wp[0] - d.px, self._wp[1] - d.py
+        ang, best = d.ang, {}
+        for key, da in ((KEY_UP, 0), (KEY_LEFT, -1), (KEY_RIGHT, 1)):
+            d.ang = (ang + da) % dm.NANG
+            dx, dy = d._dir()
+            best[key] = (dx * tx + dy * ty) / (math.hypot(tx, ty) + 1e-6)
+        d.ang = ang
+        if best[KEY_UP] > 0.97 and d.raycast()[4][dm.VW // 2] > 0.5:
+            return KEY_UP
+        if best[KEY_UP] > 0.97:
+            self._wp = None
+            return self.rng.choice([KEY_LEFT, KEY_RIGHT])
+        return KEY_LEFT if best[KEY_LEFT] > best[KEY_RIGHT] else KEY_RIGHT
+
+    def task_doom(self, deep=False):
         r = self.rng
         yield from self.open_app('doom')
         if 'doom' not in self.os.z:
             return
-        steps = r.randint(40, 250)
+        steps = r.randint(600, 1800) if deep else r.randint(40, 250)
+        self._wp, self._wp_age = None, 0
         wander_turn, wander_left = 0, 0
         for _ in range(steps):
             if 'doom' not in self.os.z:
@@ -424,11 +458,12 @@ class Driver:
             if r.random() < 0.05:
                 yield self.act(r.randrange(6))
                 continue
-            targets = [(depth, sx) for imp, (sx, size, depth) in zip(d.imps, d._project_all())
-                       if imp['state'] != 2 and depth > 0 and 0 <= sx < dm.VW and depth < 7]
+            wall = d.raycast()[4]
+            targets = [(depth, sx, size) for imp, (sx, size, depth) in zip(d.imps, d._project_all())
+                       if imp['state'] != 2 and depth > 0 and 0 <= sx < dm.VW and depth < 7 and depth < wall[int(sx)]]
             if targets and r.random() < 0.85:
-                depth, sx = min(targets)
-                if abs(sx - dm.VW // 2) > 6:
+                depth, sx, size = min(targets)
+                if abs(sx - dm.VW // 2) >= max(3, size // 4):
                     yield self.act(KEY_LEFT if sx < dm.VW // 2 else KEY_RIGHT)
                 elif d.flash == 0:
                     if r.random() < 0.3:
@@ -442,6 +477,9 @@ class Driver:
                 else:
                     yield self.act(KEY_UP if depth > 2 else 0)
                 continue
+            if deep and r.random() < 0.9:
+                yield self.act(self._doom_waypoint_key(d))
+                continue
             center = d.raycast()[4][dm.VW // 2]
             if wander_left > 0:
                 wander_left -= 1
@@ -451,7 +489,7 @@ class Driver:
                 yield self.act(wander_turn)
             else:
                 yield self.act(KEY_UP if r.random() < 0.9 else KEY_DOWN)
-        if r.random() < 0.3:
+        if r.random() < (0.05 if deep else 0.3):
             yield from self.close('doom')
 
     def type_text(self, text):
@@ -662,6 +700,10 @@ class Driver:
 
     def _main(self):
         while True:
+            if self.mode != 'mixed' and self.rng.random() < 0.85:
+                yield from (self.task_doom(deep=True) if self.mode == 'doom' else self.task_cards(full=True))
+                yield from self.idle(self.rng.randint(0, 8))
+                continue
             task = self.choose_task()
             yield from getattr(self, 'task_' + task)()
             yield from self.idle(self.rng.randint(0, 8))

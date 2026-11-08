@@ -10,10 +10,10 @@ from .driver import Driver
 OBS_KEYS = ['grid', 'cursor', 'doom_cols', 'doom_spr', 'doom_meta', 'state']
 
 
-def run_episode(seed, length):
+def run_episode(seed, length, mode='mixed'):
     o = MicroOS(seed)
     obs = o.reset()
-    d = Driver(o, seed)
+    d = Driver(o, seed, mode)
     rec = {k: [obs[k]] for k in OBS_KEYS}
     acts = []
     for _ in range(length):
@@ -30,8 +30,8 @@ def run_episode(seed, length):
 
 
 def make_shard(args):
-    path, shard_idx, n_eps, ep_len, base_seed = args
-    eps = [run_episode(base_seed * 10_000_000 + shard_idx * 1000 + e, ep_len) for e in range(n_eps)]
+    path, shard_idx, n_eps, ep_len, base_seed, mode = args
+    eps = [run_episode(base_seed * 10_000_000 + shard_idx * 1000 + e, ep_len, mode) for e in range(n_eps)]
     data = {k: np.concatenate([e[k] for e in eps]) for k in eps[0]}
     data['ep_len'] = np.array([len(e['action']) for e in eps], np.int64)
     tmp = path + '.tmp.npz'
@@ -40,10 +40,11 @@ def make_shard(args):
     return path
 
 
-def generate(out, steps, ep_len=2000, eps_per_shard=25, workers=8, seed=0, start_shard=0):
+def generate(out, steps, ep_len=2000, eps_per_shard=25, workers=8, seed=0, start_shard=0, mode='mixed'):
     os.makedirs(out, exist_ok=True)
     n_shards = max(1, steps // (ep_len * eps_per_shard))
-    jobs = [(os.path.join(out, f'shard_{seed:03d}_{i:05d}.npz'), i, eps_per_shard, ep_len, seed)
+    tag = '' if mode == 'mixed' else mode + '_'
+    jobs = [(os.path.join(out, f'shard_{tag}{seed:03d}_{i:05d}.npz'), i, eps_per_shard, ep_len, seed, mode)
             for i in range(start_shard, start_shard + n_shards)]
     jobs = [j for j in jobs if not os.path.exists(j[0])]
     t = time.time()
@@ -72,5 +73,6 @@ if __name__ == '__main__':
     ap.add_argument('--eps-per-shard', type=int, default=25)
     ap.add_argument('--workers', type=int, default=os.cpu_count())
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--mode', default='mixed', choices=['mixed', 'doom', 'cards'])
     a = ap.parse_args()
-    generate(a.out, a.steps, a.ep_len, a.eps_per_shard, a.workers, a.seed)
+    generate(a.out, a.steps, a.ep_len, a.eps_per_shard, a.workers, a.seed, mode=a.mode)

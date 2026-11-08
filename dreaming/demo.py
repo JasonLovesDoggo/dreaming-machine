@@ -89,13 +89,13 @@ def data_frame(shard: str, i: int):
 PAGE = """<!doctype html><html><head><title>Dreaming Computer</title><style>
 body{background:#181a20;color:#ddd;font-family:monospace;margin:20px}
 canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;cursor:none}
-.row{display:flex;gap:24px}.scr{position:relative;width:772px;height:580px}.grid{position:absolute;left:2px;top:2px;width:768px;height:576px;pointer-events:none;display:none;border:none;cursor:auto}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
+.row{display:flex;gap:24px}.scr{position:relative;width:772px;height:580px}.grid,.ids{position:absolute;left:2px;top:2px;width:768px;height:576px;pointer-events:none;display:none;border:none;cursor:auto}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
 </style></head><body>
 <h2>Dreaming Computer: real simulator (left) vs world model (right)</h2>
-<div class="row"><div><div>REAL (deterministic code)</div><div class="scr"><canvas id="real" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div>
-<div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div></div>
+<div class="row"><div><div>REAL (deterministic code)</div><div class="scr"><canvas id="real" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas><canvas class="ids" id="ids_real" width="768" height="576"></canvas></div></div>
+<div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas><canvas class="ids" id="ids_neural" width="768" height="576"></canvas></div></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
-checkpoint <select id="ckpt"></select> &nbsp; <label><input id="gridt" type="checkbox"> show tile grid</label> &nbsp; temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
+checkpoint <select id="ckpt"></select> &nbsp; <label><input id="gridt" type="checkbox"> show tile grid</label> <label><input id="idst" type="checkbox"> show tile IDs</label> &nbsp; temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
 <p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
 <p><a href="/data" style="color:#8cf">training data viewer</a> &middot; <a href="/sprites" style="color:#8cf">tile &amp; sprite atlas</a></p>
 <script>
@@ -113,17 +113,22 @@ for(const g of document.querySelectorAll('.grid')){const c=g.getContext('2d');c.
  for(let x=0;x<=32;x++){c.beginPath();c.moveTo(x*24+0.5,0);c.lineTo(x*24+0.5,576);c.stroke();}
  for(let y=0;y<=24;y++){c.beginPath();c.moveTo(0,y*24+0.5);c.lineTo(768,y*24+0.5);c.stroke();}}
 document.getElementById('gridt').onchange=e=>{for(const g of document.querySelectorAll('.grid'))g.style.display=e.target.checked?'block':'none';};
-fetch('/ckpts').then(r=>r.json()).then(j=>{const s=document.getElementById('ckpt');for(const n of j.ckpts){const o=document.createElement('option');o.textContent=n;if(n===j.current)o.selected=true;s.appendChild(o);}if(!j.ckpts.length){const o=document.createElement('option');o.textContent='none';s.appendChild(o);}});
+fetch('/ckpts').then(r=>r.json()).then(j=>{const s=document.getElementById('ckpt');for(const n of j.ckpts){const o=document.createElement('option');o.value=n;const m=n.match(/ckpt_0*(\d+)\.pt/);o.textContent=m?('iter '+Number(m[1]).toLocaleString()):n;if(n===j.current)o.selected=true;s.appendChild(o);}if(!j.ckpts.length){const o=document.createElement('option');o.textContent='none';s.appendChild(o);}});
 document.getElementById('ckpt').onchange=()=>cmd='load';
 document.getElementById('sync').onclick=()=>cmd='sync'; document.getElementById('reset').onclick=()=>cmd='reset';
+let idsOn=false;
+document.getElementById('idst').onchange=e=>{idsOn=e.target.checked;for(const c of document.querySelectorAll('.ids')){c.style.display=idsOn?'block':'none';c.getContext('2d').clearRect(0,0,768,576);}for(const c of Object.values(cv))c.style.opacity=idsOn?0.25:1;};
+function drawIds(id,g,off){const c=document.getElementById(id).getContext('2d');c.clearRect(0,0,768,576);c.font='bold 8px monospace';c.textAlign='center';c.textBaseline='middle';
+ for(let i=0;i<768;i++){const t=g[off+i],x=(i%32)*24+12,y=Math.floor(i/32)*24+12;c.fillStyle=t===0?'#555':'#fff';c.fillText(String(t),x,y);}}
 function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImageData(256,192);
  for(let i=0;i<256*192;i++){const p=PAL[bytes[off+i]];img.data[4*i]=p[0];img.data[4*i+1]=p[1];img.data[4*i+2]=p[2];img.data[4*i+3]=255;}
  ctx.putImageData(img,0,0);}
 const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+location.pathname.replace(/\\/$/,'')+'/ws');
 ws.binaryType='arraybuffer'; let t0=performance.now(),avg=66,sent=performance.now();
-function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;sent=performance.now();ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp,ckpt:document.getElementById('ckpt').value}));cmd=null;}
+function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;sent=performance.now();ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp,ckpt:document.getElementById('ckpt').value,ids:idsOn}));cmd=null;}
 ws.onopen=send;
-ws.onmessage=e=>{const b=new Uint8Array(e.data);draw(cv.real,b,0);if(b.length>49152)draw(cv.neural,b,49152);
+ws.onmessage=e=>{const b=new Uint8Array(e.data);const nf=(b.length%49152===0)?b.length/49152:Math.floor(b.length/(49152+1536));draw(cv.real,b,0);if(nf>1)draw(cv.neural,b,49152);
+ if(idsOn&&b.length>nf*49152){const g=new Uint16Array(e.data.slice(nf*49152));drawIds('ids_real',g,0);if(nf>1)drawIds('ids_neural',g,768);}
  const now=performance.now(),dt=now-t0;t0=now;avg=avg*0.9+dt*0.1;document.getElementById('info').textContent=` ${(1000/avg).toFixed(1)} fps`;
  setTimeout(send,Math.max(0,66-(performance.now()-sent)));};
 </script></body></html>"""
@@ -165,7 +170,8 @@ def list_ckpts():
     d = STATE.get('ckpt_dir')
     if not d or not os.path.isdir(d):
         return []
-    return sorted(os.path.basename(f) for f in glob.glob(os.path.join(d, 'ckpt*.pt')))
+    names = sorted(os.path.basename(f) for f in glob.glob(os.path.join(d, 'ckpt_*.pt')))
+    return names or [n for n in ['ckpt.pt'] if os.path.exists(os.path.join(d, n))]
 
 
 def load_ckpt(name):
@@ -186,8 +192,7 @@ def init_neural(ckpt_dir, device, name=None):
     names = list_ckpts()
     if not names:
         return
-    numbered = [n for n in names if n != 'ckpt.pt']
-    name = name or (numbered[-1] if numbered else names[-1])
+    name = name if name in names else names[-1]
     STATE['neural'] = load_ckpt(name)
     STATE['current'] = name
 
@@ -328,7 +333,10 @@ async def ws(sock: WebSocket):
         frames = [obs_to_pixels(obs)]
         if neural:
             frames.append(obs_to_pixels(neural.step(a, float(msg.get('temp', 0.0)))))
-        await sock.send_bytes(b''.join(f.astype(np.uint8).tobytes() for f in frames))
+        grids = []
+        if msg.get('ids'):
+            grids = [np.asarray(obs['grid'], np.uint16)] + ([np.asarray(neural.obs['grid'], np.uint16)] if neural else [])
+        await sock.send_bytes(b''.join(f.astype(np.uint8).tobytes() for f in frames) + b''.join(g.astype('<u2').tobytes() for g in grids))
 
 
 def main():

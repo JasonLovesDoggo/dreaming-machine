@@ -21,7 +21,8 @@ def shard_stats(path, k=6):
         a = act[off:off + L].astype(np.int64)
         st = state[off:off + L]
         off += L
-        ch = np.r_[False, (g[1:] != g[:-1]).any(1)]
+        dz = np.concatenate([z[k][off - L:off].reshape(L, -1) for k in ('doom_cols', 'doom_spr', 'doom_meta')], 1)
+        ch = np.r_[False, (g[1:] != g[:-1]).any(1) | (dz[1:] != dz[:-1]).any(1)]
         # did anything change within the next k frames (inputs take effect after a frame or two)
         fut = np.convolve(ch[::-1].astype(np.int64), np.ones(k + 1, np.int64))[:L][::-1] > 0
         fut = np.r_[fut[1:], False]
