@@ -18,13 +18,13 @@ STATE = {}
 PAGE = """<!doctype html><html><head><title>Dreaming Machine</title><style>
 body{background:#181a20;color:#ddd;font-family:monospace;margin:20px}
 canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;cursor:none}
-.row{display:flex;gap:24px}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
+.row{display:flex;gap:24px}.scr{position:relative;width:772px;height:580px}.grid{position:absolute;left:2px;top:2px;width:768px;height:576px;pointer-events:none;display:none;border:none;cursor:auto}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
 </style></head><body>
 <h2>Dreaming Machine: real simulator (left) vs world model (right)</h2>
-<div class="row"><div><div>REAL (deterministic code)</div><canvas id="real" width="256" height="192"></canvas></div>
-<div><div>NEURAL (world model, __NEURAL__)</div><canvas id="neural" width="256" height="192"></canvas></div></div>
+<div class="row"><div><div>REAL (deterministic code)</div><div class="scr"><canvas id="real" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div>
+<div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
-temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
+<label><input id="gridt" type="checkbox"> show tile grid</label> &nbsp; temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
 <p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
 <script>
 const PAL=__PAL__;
@@ -37,6 +37,10 @@ for(const c of Object.values(cv)){
 window.addEventListener('mouseup',()=>btnq.push(0));
 window.addEventListener('keydown',e=>{if(HELD[e.key]){e.preventDefault();if(!held.includes(HELD[e.key]))held.push(HELD[e.key]);return;}if(QUEUED[e.key]){e.preventDefault();typed.push(QUEUED[e.key]);return;}if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){const i=CHARSET.indexOf(e.key.toUpperCase());if(i>=0){e.preventDefault();typed.push(9+i);}}});
 window.addEventListener('keyup',e=>{held=held.filter(k=>k!==HELD[e.key]);});
+for(const g of document.querySelectorAll('.grid')){const c=g.getContext('2d');c.strokeStyle='rgba(255,255,0,0.45)';c.lineWidth=1;
+ for(let x=0;x<=32;x++){c.beginPath();c.moveTo(x*24+0.5,0);c.lineTo(x*24+0.5,576);c.stroke();}
+ for(let y=0;y<=24;y++){c.beginPath();c.moveTo(0,y*24+0.5);c.lineTo(768,y*24+0.5);c.stroke();}}
+document.getElementById('gridt').onchange=e=>{for(const g of document.querySelectorAll('.grid'))g.style.display=e.target.checked?'block':'none';};
 document.getElementById('sync').onclick=()=>cmd='sync'; document.getElementById('reset').onclick=()=>cmd='reset';
 function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImageData(256,192);
  for(let i=0;i<256*192;i++){const p=PAL[bytes[off+i]];img.data[4*i]=p[0];img.data[4*i+1]=p[1];img.data[4*i+2]=p[2];img.data[4*i+3]=255;}
