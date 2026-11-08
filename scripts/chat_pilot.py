@@ -34,7 +34,7 @@ class PilotDriver(Driver):
         self.used = Counter()
 
     def unknown(self):
-        seed, target = self.os.seed, min(range(len(FALLBACKS)), key=lambda i: (self.used[i], i))
+        seed, target = self.os.seed, min(range(len(FALLBACKS)), key=lambda i: (self.used[i], (i - seed) % len(FALLBACKS)))
         for _ in range(400):
             p = self.rng.choice(FRAMES).format(self.rng.choice(WORDS), self.rng.choice(WORDS))
             if reply(p, seed) == FALLBACKS[target]:
@@ -71,7 +71,7 @@ def episode(seed, length):
     obs = o.reset()
     d = PilotDriver(o, seed)
     rec = {k: [obs[k]] for k in OBS_KEYS}
-    acts, turns, stats = [], [], Counter()
+    acts, turns, stats, scrolled = [], [], Counter(), []
     for t in range(length):
         a = next(d.stream)
         scroll = o.chat.scroll
@@ -82,6 +82,8 @@ def episode(seed, length):
         if focus and a[3] in (KEY_UP, KEY_DOWN):
             stats['scroll_keys'] += 1
             stats['scroll_moves'] += o.chat.scroll != scroll
+            if o.chat.scroll > scroll:
+                scrolled.append(t + 1)
         if 'dreamer_send' in obs['events']:
             prompt, answer = o.chat.messages[-2][1], o.chat.pending
             turns.append(dict(t=t + 1, prompt=prompt, reply=answer, kind=kind(prompt, answer),
@@ -95,7 +97,7 @@ def episode(seed, length):
     acts.append((0, 0, 0, 0))
     out = {k: np.stack(v) for k, v in rec.items()}
     out['action'] = np.array(acts, np.uint8)
-    return out, turns, stats
+    return out, turns, stats, scrolled
 
 
 def digest(ep):
@@ -114,7 +116,7 @@ def make_shard(job):
     os.replace(path + '.tmp.npz', path)
     side = dict(meta, mode='dreamer', seeds=seeds, actions=len(seeds) * length,
                 replay_sha256=[digest(e[0]) for e in eps], turns=[e[1] for e in eps],
-                stats=[dict(e[2]) for e in eps])
+                stats=[dict(e[2]) for e in eps], scrolled=[e[3] for e in eps])
     Path(path + '.json').write_text(json.dumps(side, sort_keys=True))
     return path
 
