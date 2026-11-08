@@ -12,26 +12,33 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from .os_sim import MicroOS, obs_to_pixels
 from .driver import Driver, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, KEY_CHAR0
+from .os_sim import KEY_PLUS, KEY_TIMES, KEY_EQUALS
 from .tiles import PAL, CHARSET, SCREEN_W, SCREEN_H
 from .dataset import OBS_KEYS
 from .apps import calculator as calc
 
 MODEL = 'gpt-6.1-terra'
 KEYS = dict(UP=KEY_UP, DOWN=KEY_DOWN, LEFT=KEY_LEFT, RIGHT=KEY_RIGHT, FIRE=KEY_FIRE, ENTER=KEY_ENTER, ESC=KEY_ESC,
-            BACKSPACE=KEY_DEL, DEL=KEY_DEL)
+            BACKSPACE=KEY_DEL, DEL=KEY_DEL, PLUS=KEY_PLUS, TIMES=KEY_TIMES, EQUALS=KEY_EQUALS)
 PROMPT = f"""You are a mischievous QA tester driving a tiny retro desktop computer (screen {SCREEN_W}x{SCREEN_H} px, 8x8 px tiles).
-Desktop icons on the left (FILES, PAINT, NOTES, TRASH, CARDS, PICS, DOOM); taskbar at the bottom; windows have a title bar
-(drag it to move) and an X button at the top-right corner. Apps: Explorer (NEW button creates files by typed name; .PNG/.JPG
-names make pictures), Paint, Notepad, Solitaire, Doom (arrows move/turn, FIRE shoots).
+Desktop icons on the left (FILES, TRASH, PICS, PAINT, CARDS, DOOM, NOTES, CALC, TERM, CHAT); double-click opens one; taskbar
+at the bottom; windows have a title bar (drag it to move) and an X button at the top-right corner; ESC closes the focused app
+(except in the terminal). Apps: Explorer (NEW button creates files by typed name; .PNG/.JPG names make pictures), Paint,
+Notepad, Solitaire, Doom (arrows move/turn, FIRE shoots), CALC (orange 4x4 keypad 7 8 9 / 4 5 6 * 1 2 3 - C 0 = +; click
+buttons or type digits, PLUS/TIMES/EQUALS keys, X also means times, ENTER means equals, BACKSPACE deletes; multiplying by
+one particular number is blocked, so just move on if a press does nothing), TERMINAL (type a command then ENTER: LS CD PWD
+TREE FIND CAT HEAD TAIL WC GREP ECHO TOUCH CP MV RM MKDIR RMDIR DATE WHOAMI CLEAR BTOP NEOFETCH HELP EXIT; arrows recall
+history; try typos, bad paths, missing args, deleting things, making nested folders), CHAT (a dreamer chatbot: type a short
+message then ENTER, it replies after a moment; UP/DOWN scroll; try odd questions, greetings, nonsense, very long text).
 Your job is to produce UNUSUAL interaction data that a scripted happy-path bot would never produce: e.g. dragging windows
 in loops, off the edges, or onto the taskbar; clicking every corner of a window; typing in the wrong app; opening many apps
 at once; holding the mouse while typing; double-clicking dead space; strange filenames; abandoning tasks halfway; rapid
-alt-tabbing via the taskbar; scribbling over Paint then closing it; walking into Doom walls; etc. Do not repeat what you did
+alt-tabbing via the taskbar; chaining weird calculator sums; spamming terminal commands; chatting mid-drag; scribbling over Paint then closing it; walking into Doom walls; etc. Do not repeat what you did
 in the recent history. Keep each turn short (3-10 actions).
 Reply ONLY with JSON: {{"idea": "<what you are trying, <=12 words>", "actions": [ ... ]}} using these ops:
  {{"op":"move","x":X,"y":Y}}   {{"op":"click","x":X,"y":Y}}   {{"op":"dblclick","x":X,"y":Y}}
  {{"op":"drag","x0":X,"y0":Y,"x1":X,"y1":Y}}   {{"op":"down"}}   {{"op":"up"}}
- {{"op":"key","key":"UP|DOWN|LEFT|RIGHT|FIRE|ENTER|ESC|BACKSPACE","n":1-20}}
+ {{"op":"key","key":"UP|DOWN|LEFT|RIGHT|FIRE|ENTER|ESC|BACKSPACE|PLUS|TIMES|EQUALS","n":1-20}}
  {{"op":"type","text":"UPPERCASE TEXT using only: {CHARSET.strip()}"}}   {{"op":"wait","n":1-30}}
 Coordinates are screen pixels (0<=x<{SCREEN_W}, 0<=y<{SCREEN_H})."""
 
