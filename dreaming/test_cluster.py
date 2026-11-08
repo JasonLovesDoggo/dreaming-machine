@@ -303,8 +303,11 @@ def test_deadline_kills_descendants(tmp_path):
     rc, timed_out = run_with_deadline([sys.executable, '-c', script], time.time() + 1, grace=.2)
     assert timed_out and rc == -signal.SIGKILL
     for pid in pids.read_text().split():
-        stat = Path(f'/proc/{pid}/stat')
-        assert not stat.exists() or stat.read_text().split()[2] == 'Z'
+        try:
+            state = Path(f'/proc/{pid}/stat').read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        assert state == 'Z'
 
 
 def test_tick_errors_and_normal_exit():
