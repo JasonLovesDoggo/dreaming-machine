@@ -3,7 +3,8 @@ const $ = id => document.getElementById(id);
 
 const W = 256, H = 192, COLS = 32, ROWS = 24, CELL = 24;
 const FRAME_BYTES = W * H, TILES = COLS * ROWS;
-const FRAME_MS = 66;
+const requestedHz = Number(new URLSearchParams(location.search).get('hz') || 15);
+const FRAME_MS = 1000 / Math.max(5, Math.min(30, Number.isFinite(requestedHz) ? requestedHz : 15));
 const KEY_CHAR0 = 9;
 const HELD_KEYS = {ArrowUp: 1, ArrowDown: 2, ArrowLeft: 3, ArrowRight: 4, Control: 5};
 const QUEUED_KEYS = {Enter: 6, Escape: 7, Delete: 8, Backspace: 8};
@@ -16,22 +17,54 @@ const screens = Object.fromEntries(SIDES.map(side => {
   return [side, {el, sim: el.querySelector('.sim'), grid: el.querySelector('.grid'), ids: el.querySelector('.ids')}];
 }));
 let cfg = null;
+let palette;
+const renderCache = new WeakMap();
 
 /* ---------- input ---------- */
 
 const input = {x: W / 2, y: H / 2, btn: 0, btnQueue: [], typed: [], held: [], cmd: null};
 
 function bindInput() {
+  let pointer = null;
+  function position(el, e) {
+    const r = el.getBoundingClientRect();
+    input.x = Math.max(0, Math.min(W - 1, Math.floor((e.clientX - r.left) / r.width * W)));
+    input.y = Math.max(0, Math.min(H - 1, Math.floor((e.clientY - r.top) / r.height * H)));
+  }
+  function release() {
+    if (pointer) {
+      input.btnQueue.push({btn: 0, x: input.x, y: input.y});
+      pointer = null;
+    }
+  }
+  function cancel() {
+    release();
+    input.held = [];
+    input.typed = [];
+  }
   for (const s of Object.values(screens)) {
-    s.sim.addEventListener('mousemove', e => {
-      const r = s.sim.getBoundingClientRect();
-      input.x = Math.max(0, Math.min(W - 1, Math.floor((e.clientX - r.left) / r.width * W)));
-      input.y = Math.max(0, Math.min(H - 1, Math.floor((e.clientY - r.top) / r.height * H)));
+    s.sim.style.touchAction = 'none';
+    s.sim.addEventListener('pointermove', e => {
+      if (!pointer || pointer.id === e.pointerId) position(s.sim, e);
     });
-    s.sim.addEventListener('mousedown', e => { input.btnQueue.push(1); e.preventDefault(); });
+    s.sim.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || !e.isPrimary || pointer) return;
+      position(s.sim, e);
+      pointer = {id: e.pointerId, el: s.sim};
+      s.sim.setPointerCapture(e.pointerId);
+      input.btnQueue.push({btn: 1, x: input.x, y: input.y});
+      e.preventDefault();
+    });
+    s.sim.addEventListener('pointercancel', cancel);
+    s.sim.addEventListener('lostpointercapture', release);
     s.sim.addEventListener('contextmenu', e => e.preventDefault());
   }
-  window.addEventListener('mouseup', () => input.btnQueue.push(0));
+  window.addEventListener('pointerup', e => {
+    if (e.button !== 0 || pointer?.id !== e.pointerId) return;
+    position(pointer.el, e);
+    release();
+  });
+  window.addEventListener('blur', cancel);
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'SELECT') return;
     if (HELD_KEYS[e.key]) {
@@ -55,20 +88,24 @@ function bindInput() {
 }
 
 function nextAction() {
-  if (input.btnQueue.length) input.btn = input.btnQueue.shift();
+  const transition = input.btnQueue.shift();
+  if (transition) input.btn = transition.btn;
   const key = input.typed.length ? input.typed.shift() : (input.held.at(-1) || 0);
-  return {x: input.x, y: input.y, btn: input.btn, key};
+  return {x: transition ? transition.x : input.x, y: transition ? transition.y : input.y, btn: input.btn, key};
 }
 
 /* ---------- screens ---------- */
 
 function drawScreen(canvas, bytes, offset) {
-  const ctx = canvas.getContext('2d');
-  const img = ctx.createImageData(W, H);
+  let cached = renderCache.get(canvas);
+  if (!cached) {
+    const ctx = canvas.getContext('2d'), img = ctx.createImageData(W, H);
+    cached = {ctx, img, pixels: new Uint32Array(img.data.buffer)};
+    renderCache.set(canvas, cached);
+  }
+  const {ctx, img, pixels} = cached;
   for (let i = 0; i < FRAME_BYTES; i++) {
-    const p = cfg.pal[bytes[offset + i]];
-    img.data.set(p, 4 * i);
-    img.data[4 * i + 3] = 255;
+    pixels[i] = palette[bytes[offset + i]];
   }
   ctx.putImageData(img, 0, 0);
 }
@@ -192,44 +229,61 @@ function connect() {
   const base = location.pathname.replace(/\/$/, '');
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + base + '/ws');
   ws.binaryType = 'arraybuffer';
-  let sentAt = 0, lastFrame = performance.now(), avgMs = FRAME_MS;
+  const pending = [], compressed = typeof DecompressionStream === 'function';
+  let clock, messages = Promise.resolve(), lastFrame = null, avgMs = FRAME_MS;
 
   function send() {
+    if (ws.readyState !== WebSocket.OPEN || pending.length >= 3) return;
     const temp = parseFloat($('temp').value);
     $('temp-value').textContent = temp;
-    sentAt = performance.now();
+    pending.push(performance.now());
     const action = nextAction();
     if (action.btn) window.telemetry?.action('mouse');
     if (action.key) window.telemetry?.action('key');
     window.telemetry?.checkpoint($('ckpt').value);
-    ws.send(JSON.stringify({...action, cmd: input.cmd, temp, ckpt: $('ckpt').value, ids: tileIds.on, telemetry: true}));
+    ws.send(JSON.stringify({...action, cmd: input.cmd, temp, ckpt: $('ckpt').value, ids: tileIds.on, telemetry: true, z: compressed ? 1 : 0}));
     input.cmd = null;
   }
 
-  ws.onopen = send;
+  ws.onopen = () => { send(); clock = setInterval(send, FRAME_MS); };
+  ws.onclose = () => clearInterval(clock);
   ws.onmessage = e => {
-    if (typeof e.data === 'string') {
-      window.telemetry?.server(JSON.parse(e.data));
+    const receivedAt = performance.now();
+    messages = messages.then(() => receive(e.data, receivedAt)).catch(error => {
+      console.error('play websocket message failed', error);
+      clearInterval(clock);
+      ws.close();
+    });
+  };
+  async function receive(data, receivedAt) {
+    if (typeof data === 'string') {
+      window.telemetry?.server(JSON.parse(data));
       return;
     }
-    const buf = new Uint8Array(e.data), n = buf[0], hasIds = buf[1];
+    if (new Uint8Array(data)[0] === 255) {
+      data = await new Response(new Blob([data.slice(1)]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+    }
+    const rtt = receivedAt - pending.shift();
+    const buf = new Uint8Array(data), n = buf[0], hasIds = buf[1];
     SIDES.slice(0, n).forEach((side, k) => drawScreen(screens[side].sim, buf, 2 + k * FRAME_BYTES));
     if (hasIds && tileIds.on) {
-      const ids = new Uint16Array(e.data.slice(2 + n * FRAME_BYTES));
+      const ids = new Uint16Array(data.slice(2 + n * FRAME_BYTES));
       SIDES.slice(0, n).forEach((side, k) => tileIds.draw(side, ids.slice(k * TILES, (k + 1) * TILES)));
       tileIds.showHover();
     }
     const now = performance.now();
-    avgMs = avgMs * 0.9 + (now - lastFrame) * 0.1;
+    if (lastFrame !== null) avgMs = avgMs * 0.9 + (now - lastFrame) * 0.1;
     lastFrame = now;
-    $('fps').textContent = ` ${(1000 / avgMs).toFixed(1)} fps`;
+    $('fps').textContent = ` ${(1000 / avgMs).toFixed(1)} fps · ${Math.round(rtt)} ms`;
     window.telemetry?.frame(1000 / avgMs);
-    setTimeout(send, Math.max(0, FRAME_MS - (now - sentAt)));
-  };
+  }
 }
 
 fetch('config').then(r => r.json()).then(c => {
   cfg = c;
+  const rgba = new Uint8Array(cfg.pal.length * 4);
+  cfg.pal.forEach((color, i) => { rgba.set(color, i * 4); rgba[i * 4 + 3] = 255; });
+  palette = new Uint32Array(rgba.buffer);
   fillCheckpoints();
   bindInput();
   bindOverlays();
