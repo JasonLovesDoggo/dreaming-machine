@@ -256,6 +256,7 @@ function connect() {
   const pending = [], compressed = typeof DecompressionStream === 'function';
   let clock, messages = Promise.resolve(), lastFrame = null, avgMs = 1000 / targetHz;
   const targetControl = document.createElement('label');
+  targetControl.style.whiteSpace = 'nowrap';
   targetControl.title = 'One frame = one simulator step, so higher values also speed up the game.';
   const targetInput = document.createElement('input');
   Object.assign(targetInput, {id: 'fps-target', type: 'number', min: '5', max: '30', step: '1', value: String(targetHz)});
