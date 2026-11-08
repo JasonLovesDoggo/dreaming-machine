@@ -42,10 +42,37 @@ CHAR_IDX = {c: i for i, c in enumerate(CHARSET)}
 NCH = len(CHARSET)
 GLYPHS = np.array([[[c == '#' for c in row] for row in FONT3[ch]] for ch in CHARSET], bool)
 
+NEO_LOGO = [
+    '####..........####......................................',
+    '####.........#####......................................',
+    '#####........#####......................................',
+    '######.......#####......................................',
+    '#######......#####.........##.................##........',
+    '########.....#####......########..........##########....',
+    '########.....#####....############.......############...',
+    '#########....#####....############......##############..',
+    '##########...#####...#######..#####....################.',
+    '###########..#####..#######....#####...######....######.',
+    '############.#####..######.....#####..######......######',
+    '####.#######..####..######.....#####..######......######',
+    '####..############..################..######......######',
+    '####...###########.##################.######......######',
+    '####....##########.##################.######......######',
+    '####....##########.#################..######......######',
+    '####.....#########..#####.............######......######',
+    '####......########..######............######......######',
+    '####.......#######..######............#######....#######',
+    '####........######..#######.....###....#######..#######.',
+    '####........######...##############....################.',
+    '####.........#####....#############.....##############..',
+    '####..........####.....############.......##########....',
+    '####...........###.......#######...........#######......',
+]
+
 # text contexts: (fg, bg)
 TEXT_CTX = {
     'title': (WHITE, NAVY), 'title_in': (LGRAY, DGRAY), 'body': (K, WHITE), 'sel': (WHITE, BLUE),
-    'tool': (K, LGRAY), 'desk': (WHITE, TEAL), 'hud': (RED, K),
+    'tool': (K, LGRAY), 'desk': (WHITE, TEAL), 'hud': (RED, K), 'term': (GREEN, K),
     'dreamer': (WHITE, NAVY),
 }
 CTX_NAMES = list(TEXT_CTX)
@@ -86,6 +113,10 @@ ICON_ART = {
              "...kkkkkkkkkk...", "...kOkOkOkOOk...", "...kkkkkkkkkk...", "...kOkOkOkOOk...", "...kkkkkkkkkk...",
              "................"],
 }
+ICON_ART['terminal'] = ['................', '.gggggggggggggg.', '.gkkkkkkkkkkkkg.',
+                        '.gkkkkkkkkkkkkg.', '.gkGkkkkkkkkkkg.', '.gkkGkkkkkkkkkg.',
+                        '.gkkkGkkkkkkkkg.', '.gkkGkkkkkkkkkg.', '.gkGkkGGGkkkkkg.'] + [
+                        '.gkkkkkkkkkkkkg.'] * 4 + ['.gggggggggggggg.', '................', '................']
 ICON_ART['dreamer'] = ['wwwwwwwwwwwwwwww', 'wwwwwwkkwwwwwwww', 'wwwwwkwwkkkkwwww',
                        'wwwwkwwwkwwwkwww', 'wwwkkwkwwwwwwkww', 'wwkwkwkwkkkkwkww',
                        'wkwwkwkkkwwwkkww', 'wkwwkwkwwkkwwkww', 'wwkwwkkwwkwkwwkw',
@@ -261,6 +292,21 @@ def build_atlas():
         A.add(('back', sides), with_edges(back, sides.replace('m', ''), K))
     for sides in ['tl', 'tr', 'ml', 'mr', 'bl', 'br']:
         A.add(('slot', sides), with_edges(solid(DGREEN), sides.replace('m', ''), GREEN))
+    A.__exit__()
+    A.section('app_terminal')
+    for name, color in [('green', GREEN), ('yellow', YELLOW), ('red', RED)]:
+        for fill in range(9):
+            tile = solid(K)
+            tile[2:6, :] = DGRAY
+            tile[2:6, :fill] = color
+            A.add(('term_bar', name, fill), tile)
+    for r in range(3):
+        for c in range(7):
+            tile = solid(K)
+            for y in range(T):
+                for x in range(T):
+                    if NEO_LOGO[r * T + y][c * T + x] == '#': tile[y, x] = BLUE
+            A.add(('neo_logo', r, c), tile)
     A.__exit__()
     n_static = A.ranges[('core',)][1]
     # text: char pairs per context

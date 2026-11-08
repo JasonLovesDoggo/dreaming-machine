@@ -27,6 +27,13 @@ Dreamer uses the reserved app state slot and extension fields 8 through 11.
 Its desktop icon is a black-on-white pixel rendering of the ChatGPT knot mark
 (reference: Wikimedia Commons `ChatGPT_logo.svg`), using IDs 1792 through 1795
 in the reserved `app_dreamer` section. Main's calculator icon keeps IDs 544 through 547.
+The desktop entry follows calculator and terminal; the text context follows terminal.
+Calculator uses extension fields 0:4, terminal 4:8, and Dreamer 8:12.
+
+The held-out multiplication-by-24 rule also applies to Dreamer: corpus generation,
+loading and export exclude pairs containing forms such as `24 TIMES` or `X 24`.
+Typing cannot complete those forms; live replies and cached replies containing
+them are rejected in favor of local retrieval. Other uses of 24 remain available.
 
 To rebuild or extend offline, install `openai` and run
 `python scripts/build_dreamer_corpus.py --target 30000 --rounds 3` with

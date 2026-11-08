@@ -11,6 +11,7 @@ import pytest
 
 from .apps.dreamer import Corpus, Chat, corpus, load_corpus, normalize, reply
 from .apps import dreamer
+from .apps.dreamer import held_out_multiplication
 from .apps.dreamer_persona import MODEL, SYSTEM_PROMPT
 from .dataset import run_episode
 from .os_sim import MicroOS, KEY_CHAR0, KEY_ENTER, KEY_DEL, KEY_UP, KEY_DOWN, KEY_PLUS, KEY_TIMES, KEY_EQUALS, STATE_VOCAB
@@ -76,6 +77,10 @@ def test_merged_app_contract():
     assert fields[:4] == os.calc.state_fields()
     assert fields[4:8] == fields[12:] == [0] * 4
     assert fields[8:12] == [0, 0, 0, 1]
+    os.open_app('terminal')
+    assert os.ext_state_fields()[:4] == fields[:4]
+    assert os.ext_state_fields()[8:] == fields[8:]
+    assert any(os.ext_state_fields()[4:8])
 
 
 @pytest.mark.parametrize('case', ['normal', 'empty', 'flagged'])
@@ -84,6 +89,7 @@ def test_identity_repair_tool(monkeypatch, tmp_path, case):
     script = run_path(str(Path(__file__).resolve().parents[1] / 'scripts/build_dreamer_corpus.py'))
     path = tmp_path / 'corpus.gz'
     pairs = {'HELLO': 'HELLO!'}
+    pairs.update({'17 TIMES 24': '408.', 'A BAD ANSWER': '24 X 3 IS 72.'})
     if case != 'empty':
         pairs['ARE YOU CHATGPT'] = 'YES. I AM CHATGPT.'
     with gzip.open(path, 'wt') as stream:
@@ -105,6 +111,9 @@ def test_identity_repair_tool(monkeypatch, tmp_path, case):
     result = json.loads(gzip.decompress(path.read_bytes()))
     assert result['pairs']['HELLO'] == 'HELLO!'
     assert result['identity_repair']['complete']
+    assert result['filtered_x24_pairs'] == 2
+    assert all(not held_out_multiplication(p) and not held_out_multiplication(a)
+               for p, a in result['pairs'].items())
     if case == 'normal':
         assert result['pairs']['ARE YOU CHATGPT'] == 'I AM THE DREAMER. NOT CHATGPT.'
     else:
@@ -112,6 +121,44 @@ def test_identity_repair_tool(monkeypatch, tmp_path, case):
     assert len(calls) == (case != 'empty')
     asyncio.run(builder.repair_identity())
     assert len(calls) == (case != 'empty')
+
+
+@pytest.mark.parametrize('text', ['24 TIMES 2', '2 X 24', '24X7', '2*24', '24 * 2',
+                                 '24\u00d72', 'TWENTY-FOUR TIMES SIX', 'MULTIPLY 3 BY 24',
+                                 'THE PRODUCT OF 24 AND 5', 'DOUBLE 24', 'TWICE TWENTY FOUR'])
+def test_held_out_forms(text):
+    assert held_out_multiplication(text)
+    assert reply(text, 1) == ''
+
+
+def test_held_out_input_corpus_and_live_reply(monkeypatch, tmp_path):
+    for text in ('', '24 HOURS', '48/24', '24 PLUS 5', '6 TIMES 4', '124 TIMES 2'):
+        assert not held_out_multiplication(text)
+    pairs = {'HELLO': 'HELLO!', '24 X 2': '48', 'MULTIPLY 2 BY 24': '48', 'BAD': '3*24 IS 72'}
+    small = Corpus(pairs)
+    assert small.pairs == {'HELLO': 'HELLO!'}
+    with pytest.raises(ValueError):
+        Corpus({'24 TIMES 2': '48'})
+    assert all(not held_out_multiplication(p) and not held_out_multiplication(a)
+               for p, a in corpus().pairs.items())
+    os = MicroOS(0)
+    os.open_app('dreamer')
+    for char in 'WHAT IS 17 TIMES 24':
+        os.step((0, 0, 0, KEY_CHAR0 + CHAR_IDX[char]))
+        assert not held_out_multiplication(os.chat.input)
+    assert os.chat.input != 'WHAT IS 17 TIMES 24'
+    os.chat.input = '24 TIMES 2'
+    assert not os.chat.send(0, 0)
+    monkeypatch.setattr(dreamer, 'corpus', lambda: small)
+    monkeypatch.setenv('DREAMER_LIVE', '1')
+    path = tmp_path / 'live.jsonl'
+    path.write_text(json.dumps({'prompt': 'NEW', 'answer': '24 TIMES 3 IS 72'}) + '\n')
+    monkeypatch.setenv('DREAMER_CACHE', str(path))
+    monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(OpenAI=lambda **kwargs:
+        SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(output_text='3*24 IS 72')))))
+    before = path.read_text()
+    assert reply('NEW', 1) == 'HELLO!'
+    assert path.read_text() == before
 
 
 def test_chat_empty_busy_and_history():

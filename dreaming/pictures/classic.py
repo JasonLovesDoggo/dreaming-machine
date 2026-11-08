@@ -1,86 +1,13 @@
-"""Name-conditioned procedural pictures for the 32x20 Paint canvas. Same name -> same category, random variation."""
+"""The original hand-drawn picture subjects (objects, sky and a few animals)."""
 import math
 import numpy as np
 
-H, W = 20, 32
-WHITE, BLACK, RED, BLUE, GREEN, YELLOW, BROWN, GRAY = range(8)
-_yy, _xx = np.mgrid[0:H, 0:W].astype(np.float64)
-
-
-def ellipse(cv, cx, cy, rx, ry, c):
-    rx, ry = max(rx, 0.6), max(ry, 0.6)
-    cv[((_xx - cx) / rx) ** 2 + ((_yy - cy) / ry) ** 2 <= 1] = c
-
-
-def circle(cv, cx, cy, r, c):
-    ellipse(cv, cx, cy, r, r, c)
-
-
-def rect(cv, x0, y0, x1, y1, c):
-    cv[(_xx >= min(x0, x1)) & (_xx <= max(x0, x1)) & (_yy >= min(y0, y1)) & (_yy <= max(y0, y1))] = c
-
-
-def poly(cv, pts, c):
-    inside = np.zeros((H, W), bool)
-    n = len(pts)
-    for i in range(n):
-        (x1, y1), (x2, y2) = pts[i], pts[(i + 1) % n]
-        cond = ((y1 > _yy) != (y2 > _yy)) & (_xx < (x2 - x1) * (_yy - y1) / (y2 - y1 + 1e-9) + x1)
-        inside ^= cond
-    cv[inside] = c
-
-
-def line(cv, x0, y0, x1, y1, c, r=0.5):
-    n = int(max(abs(x1 - x0), abs(y1 - y0)) * 2) + 2
-    for t in np.linspace(0, 1, n):
-        circle(cv, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, c)
-
-
-def background(cv, rng, kind=None):
-    kind = kind or rng.choice(['sky', 'sky', 'plain', 'gray', 'yellow', 'grass'])
-    if kind == 'sky':
-        cv[:] = BLUE
-        cv[int(H * rng.uniform(0.62, 0.8)):] = rng.choice([GREEN, GREEN, BROWN])
-    elif kind == 'plain':
-        cv[:] = WHITE
-    elif kind == 'gray':
-        cv[:] = GRAY
-    elif kind == 'yellow':
-        cv[:] = YELLOW
-    elif kind == 'grass':
-        cv[:] = GREEN
-    elif kind == 'water':
-        cv[:] = BLUE
-        for _ in range(rng.randint(3, 7)):
-            circle(cv, rng.uniform(0, W), rng.uniform(0, H), 0.6, WHITE)
-    elif kind == 'night':
-        cv[:] = BLACK
-        for _ in range(rng.randint(4, 10)):
-            cv[rng.randint(0, H), rng.randint(0, W)] = YELLOW
-    elif kind == 'sea':
-        cv[:] = rng.choice([BLUE, WHITE, YELLOW])
-        cv[int(H * rng.uniform(0.6, 0.75)):] = BLUE
-    return kind
+from .draw import (H, W, WHITE, BLACK, RED, BLUE, GREEN, YELLOW, BROWN, GRAY, ellipse, circle, rect, poly, line)
 
 
 def other(c, rng, avoid):
     opts = [x for x in range(8) if x not in avoid]
     return rng.choice(opts)
-
-
-def cat(cv, rng, cx, cy, s):
-    col = rng.choice([BLACK, BROWN, GRAY, YELLOW])
-    d = rng.choice([-1, 1])
-    ellipse(cv, cx + d * s, cy + 3 * s, 5 * s, 3 * s, col)
-    line(cv, cx + d * 5.5 * s, cy + 3 * s, cx + d * 7.5 * s, cy - 1 * s, col, 0.6 * s)
-    hx, hy = cx - d * 3 * s, cy - 1.5 * s
-    circle(cv, hx, hy, 3.2 * s, col)
-    poly(cv, [(hx - 3 * s, hy - 1 * s), (hx - 2.2 * s, hy - 5.5 * s), (hx - 0.3 * s, hy - 2.5 * s)], col)
-    poly(cv, [(hx + 3 * s, hy - 1 * s), (hx + 2.2 * s, hy - 5.5 * s), (hx + 0.3 * s, hy - 2.5 * s)], col)
-    eye = GREEN if col != GREEN else YELLOW
-    circle(cv, hx - 1.3 * s, hy - 0.6 * s, 0.6 * s, eye)
-    circle(cv, hx + 1.3 * s, hy - 0.6 * s, 0.6 * s, eye)
-    circle(cv, hx, hy + 0.8 * s, 0.5 * s, RED)
 
 
 def dog(cv, rng, cx, cy, s):
@@ -321,64 +248,13 @@ def abstract(cv, rng, cx, cy, s):
             line(cv, x, y, x + rng.uniform(-10, 10) * s, y + rng.uniform(-6, 6) * s, c, 0.6)
 
 
-CATEGORIES = {
-    'cat': (cat, None), 'dog': (dog, None), 'fish': (fish, 'water'), 'house': (house, None), 'tree': (tree, 'sky'),
-    'sun': (sun, 'sky'), 'sunset': (sunset, 'self'), 'flower': (flower, None), 'car': (car, None),
-    'bird': (bird, 'sky'), 'face': (face, None), 'mountain': (mountain, 'sky'), 'boat': (boat, 'sea'),
-    'heart': (heart, None), 'star': (star, 'night'), 'robot': (robot, None), 'apple': (apple, None),
-    'ghost': (ghost, 'night'), 'pizza': (pizza, None), 'snowman': (snowman, 'sky'), 'moon': (moon, 'night'),
+SUBJECTS = {
+    'dog': (dog, None, 'DOG PUPPY DOGGY'), 'fish': (fish, 'water', 'FISH GOLDFISH'),
+    'house': (house, None, 'HOUSE HOME'), 'tree': (tree, 'sky', 'TREE OAK FOREST'), 'sun': (sun, 'sky', 'SUN SUNNY'),
+    'sunset': (sunset, 'self', 'SUNSET SUNRISE DUSK'), 'flower': (flower, None, 'FLOWER FLOWERS PETAL'),
+    'car': (car, None, 'CAR'), 'bird': (bird, 'sky', 'BIRD BIRDIE ROBIN'), 'face': (face, None, 'FACE SMILE SMILEY SELFIE'),
+    'mountain': (mountain, 'sky', 'MOUNTAIN HILL ALPS'), 'boat': (boat, 'sea', 'BOAT SHIP'),
+    'heart': (heart, None, 'HEART LOVE'), 'star': (star, 'night', 'STAR'), 'robot': (robot, None, 'ROBOT'),
+    'apple': (apple, None, 'APPLE'), 'ghost': (ghost, 'night', 'GHOST'), 'pizza': (pizza, None, 'PIZZA'),
+    'snowman': (snowman, 'sky', 'SNOWMAN'), 'moon': (moon, 'night', 'MOON'),
 }
-KEYWORDS = {
-    'CAT': 'cat', 'KITTY': 'cat', 'KITTEN': 'cat', 'DOG': 'dog', 'PUPPY': 'dog', 'FISH': 'fish', 'HOUSE': 'house',
-    'HOME': 'house', 'TREE': 'tree', 'SUNSET': 'sunset', 'SUN': 'sun', 'FLOWER': 'flower', 'ROSE': 'flower',
-    'CAR': 'car', 'BIRD': 'bird', 'FACE': 'face', 'SMILE': 'face', 'SMILEY': 'face', 'SELFIE': 'face',
-    'MOUNTAIN': 'mountain', 'HILL': 'mountain', 'BOAT': 'boat', 'SHIP': 'boat', 'HEART': 'heart', 'LOVE': 'heart',
-    'STAR': 'star', 'ROBOT': 'robot', 'APPLE': 'apple', 'GHOST': 'ghost', 'PIZZA': 'pizza', 'SNOWMAN': 'snowman',
-    'MOON': 'moon',
-}
-IMAGE_EXTS = ('.PNG', '.JPG', '.JPEG', '.BMP', '.GIF')
-
-
-def is_image(name):
-    return name.upper().endswith(IMAGE_EXTS)
-
-
-def parse_name(name):
-    base = name.upper().rsplit('.', 1)[0]
-    found = []
-    for kw in sorted(KEYWORDS, key=len, reverse=True):
-        while kw in base:
-            found.append((base.index(kw), KEYWORDS[kw]))
-            base = base.replace(kw, ' ' * len(kw), 1)
-    found.sort()
-    return [c for _, c in found][:3]
-
-
-def generate(name, rng):
-    cv = np.zeros((H, W), np.uint8)
-    cats = parse_name(name)
-    if not cats:
-        background(cv, rng, rng.choice(['plain', 'gray', 'yellow', 'night', 'grass']))
-        abstract(cv, rng, W / 2, H / 2, 1.0)
-        return cv
-    first_bg = CATEGORIES[cats[0]][1]
-    if first_bg == 'self':
-        CATEGORIES[cats[0]][0](cv, rng, W / 2 + rng.uniform(-6, 6), H / 2, 1.0)
-        cats = cats[1:]
-        obj = np.full((H, W), 255, np.uint8)
-    else:
-        obj = np.full((H, W), 255, np.uint8)
-    n = len(cats)
-    for i, c in enumerate(cats):
-        s = rng.uniform(0.8, 1.15) / (n ** 0.6)
-        cx = W * (i + 0.5) / n + rng.uniform(-3, 3) / n
-        cy = H / 2 + rng.uniform(-1.5, 1.5)
-        CATEGORIES[c][0](obj, rng, cx, cy, s)
-    if first_bg != 'self':
-        vals = obj[obj != 255]
-        dom = np.bincount(vals, minlength=8).argmax() if vals.size else -1
-        for _ in range(8):
-            background(cv, rng, first_bg if first_bg and _ == 0 else None)
-            if np.bincount(cv.ravel(), minlength=8).argmax() != dom:
-                break
-    return np.where(obj == 255, cv, obj).astype(np.uint8)

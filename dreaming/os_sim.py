@@ -7,10 +7,12 @@ from .tiles import (ATLAS, GW, GH, T, SCREEN_W, SCREEN_H, text_id, canvas_id, gr
 from . import doom as dm
 from . import pictures as pics
 from .apps import calculator as calc_app
+from .apps.terminal import Terminal
 from .apps import dreamer
 
 APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13),
              'calculator': (calc_app.W, calc_app.H)}
+APP_SIZES['terminal'] = (20, 14)
 APP_SIZES['dreamer'] = (24, 18)
 APPS = list(APP_SIZES)
 # Fixed OS-state slots: existing apps keep their slot forever; new apps take a reserved one (never reorder).
@@ -20,6 +22,8 @@ FOCUS_COL = 3 * len(APP_SLOTS)
 EXT_FIELDS, EXT_VOCAB = 16, 32  # spare per-app state fields at the end of the state vector
 APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM', 'notepad': 'NOTEPAD', 'calculator': 'CALC'}
 DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6), 'calculator': (18, 3)}
+APP_TITLES['terminal'] = 'TERMINAL'
+DEFAULT_POS['terminal'] = (12, 5)
 APP_TITLES['dreamer'] = 'DREAMER'
 DEFAULT_POS['dreamer'] = (7, 3)
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
@@ -32,8 +36,10 @@ NP_COLS, NP_ROWS, NP_MAX = 32, 10, 600
 DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('explorer', 'TRASH')),
               ('picture', 'PICS', ('explorer', 'C:/PICS')), ('paint', 'PAINT', ('paint', None)),
               ('cards', 'CARDS', ('cards', None)), ('doom', 'DOOM', ('doom', None)),
-              ('notepad', 'NOTES', ('notepad', None)), ('calc', 'CALC', ('calculator', None)), ('dreamer', 'DREAM', ('dreamer', None))]
+              ('notepad', 'NOTES', ('notepad', None)), ('calc', 'CALC', ('calculator', None))]
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
+DESK_ICONS.append(('terminal', 'TERM', ('terminal', None)))
+DESK_ICONS.append(('dreamer', 'DREAM', ('dreamer', None)))
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
 TASKBAR_BTN_W = 5
@@ -109,6 +115,7 @@ class MicroOS:
             'OLD.TXT': 'THIS FILE IS OLD.\nYOU CAN EMPTY THE TRASH.',
         }
         self.new_doc = 1
+        self.term = Terminal(self)
         self.deal_no = 0
         self.doom = dm.Doom()
         self.calc = calc_app.Calc()
@@ -117,7 +124,9 @@ class MicroOS:
         return self.observe([])
 
     def _reset_app(self, app, arg=None):
-        if app == 'explorer':
+        if app == 'terminal':
+            self.term = Terminal(self)
+        elif app == 'explorer':
             self.ex_path, self.ex_sel = (arg or 'C:'), -1
             self.ex_naming = None
         elif app == 'paint':
@@ -182,7 +191,7 @@ class MicroOS:
             self.pt_drawing = False
         self.z.remove(app)
         self.pos.pop(app, None)
-        if app in ('paint', 'notepad', 'calculator'):
+        if app in ('paint', 'notepad', 'calculator', 'terminal'):
             self._reset_app(app)
         if app == 'cards':
             self.c_press, self.c_dragging = None, False
@@ -292,8 +301,14 @@ class MicroOS:
             return
         getattr(self, '_press_' + app)(mx, my, lc, lr, dbl, events)
 
+    def _press_terminal(self, mx, my, lc, lr, dbl, events):
+        pass
+
     def _key(self, key, events):
         app = self.focus
+        if app == 'terminal':
+            self.term.key(key, events)
+            return
         if app == 'explorer' and self.ex_naming is not None:
             self._ex_name_key(key, events)
             return
@@ -311,8 +326,10 @@ class MicroOS:
             elif key == KEY_DOWN:
                 self.chat.scroll = max(0, self.chat.scroll - 1)
             elif KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.chat.input) < 160:
-                self.chat.input += CHARSET[key - KEY_CHAR0]
-                events.append('dreamer_type')
+                candidate = self.chat.input + CHARSET[key - KEY_CHAR0]
+                if not dreamer.held_out_multiplication(candidate):
+                    self.chat.input = candidate
+                    events.append('dreamer_type')
         elif app == 'notepad':
             if KEY_CHAR0 <= key < KEY_EXTRA0 and len(self.np_text) < NP_MAX:
                 self.np_text += CHARSET[key - KEY_CHAR0]
@@ -425,29 +442,35 @@ class MicroOS:
             events.append('ex_open_txt')
 
     def _ex_delete(self, events):
-        items = self.fs[self.ex_path]
-        if not (0 <= self.ex_sel < len(items)):
+        self._delete_file(self.ex_path, self.ex_sel, events)
+
+    def _delete_file(self, path, index, events):
+        items = self.fs[path]
+        if not (0 <= index < len(items)):
             return
-        name, kind = items[self.ex_sel]
+        name, kind = items[index]
         if kind == 'folder':
             return
-        items.pop(self.ex_sel)
-        if self.ex_path == 'TRASH':
+        items.pop(index)
+        if path == 'TRASH':
             self.origin.pop(name, None)
             self.pictures.pop(name, None)
             self.texts.pop(name, None)
             events.append('ex_delete_forever')
         else:
             if len(self.fs['TRASH']) >= 9:
-                self.fs['TRASH'].pop(0)
+                old, _ = self.fs['TRASH'].pop(0)
+                self.origin.pop(old, None)
+                self.texts.pop(old, None)
+                self.pictures.pop(old, None)
             self.fs['TRASH'].append((name, kind))
-            self.origin[name] = self.ex_path
+            self.origin[name] = path
             events.append('ex_delete')
             if self.pt_file == name:
                 self.pt_file = None
             if self.np_file == name:
                 self.np_file = None
-        self.ex_sel = min(self.ex_sel, len(items) - 1)
+        self.ex_sel = min(self.ex_sel, len(self.fs[self.ex_path]) - 1)
 
     def _ex_restore(self, events):
         items = self.fs['TRASH']
@@ -733,7 +756,10 @@ class MicroOS:
             put_text(g, wr + 1, wc + col, s, 'tool')
 
     def _render_window(self, g, app):
-        if app == 'explorer':
+        if app == 'terminal':
+            wc, wr, _, _ = self._frame(g, app, 'TERMINAL', 'hud')
+            self.term.render(g, wc, wr)
+        elif app == 'explorer':
             wc, wr, w, h = self._frame(g, app, self.ex_path, 'body')
             items = [(1, 'UP'), (3, 'OPEN'), (6, 'DEL')]
             if self.ex_path == 'TRASH':
@@ -842,16 +868,22 @@ class MicroOS:
                     doom_meta=meta, state=self.state_vector(), events=events)
 
     def ext_state_fields(self):
-        """Spare state fields for new apps; each app claims a fixed sub-range and leaves the rest zero."""
-        fields = [0] * EXT_FIELDS
-        # Calculator owns ext fields 0:4.
+        """Spare state fields for new apps; each app claims a fixed sub-range and leaves the rest zero.
+        [0:4] calculator: pending op (0-4), error, display length (0-9), flashing button + 1 (0-16)."""
+        ext = [0] * EXT_FIELDS
         if 'calculator' in self.z:
-            fields[0:4] = self.calc.state_fields()
+            ext[0:4] = self.calc.state_fields()
+        # ext[4:8] = terminal; ext[0:4] calculator, 8:12 dreamer, 12:16 flight reserved by convention
+        if 'terminal' in self.z:
+            ext[4:8] = [self.term.mode,
+                        min(len(self.term.input) // 2, 31),
+                        PATHS.index(self.term.cwd) if self.term.cwd in PATHS else 5,
+                        min(len(self.term.lines), 31)]
         # Dreamer owns ext fields 8:12; all values fit EXT_VOCAB.
         if 'dreamer' in self.z:
-            fields[8:12] = [int(bool(self.chat.pending)), min(31, self.chat.progress // 4),
-                            min(31, self.chat.scroll), len(self.chat.messages)]
-        return fields
+            ext[8:12] = [int(bool(self.chat.pending)), min(31, self.chat.progress // 4),
+                          min(31, self.chat.scroll), len(self.chat.messages)]
+        return ext
 
     def state_vector(self):
         f = []
@@ -863,7 +895,7 @@ class MicroOS:
         f.append(self.btn)
         f.append(min(self.t - self.last_press_t, 9))
         f.append(self.desk_sel + 1)
-        f += [PATHS.index(self.ex_path), self.ex_sel + 1, len(self.fs[self.ex_path]), len(self.fs['TRASH'])]
+        f += [PATHS.index(self.ex_path) if self.ex_path in PATHS else 0, self.ex_sel + 1, len(self.fs[self.ex_path]), len(self.fs['TRASH'])]
         f += [self.pt_color, int(self.pt_file is not None), int(self.pt_drawing)]
         sk = 0 if self.c_sel is None else (1 if self.c_sel[0] == 'waste' else 2)
         f += [len(self.stock) // 2, len(self.waste) // 2] + [len(x) for x in self.found] + [sk, self.deal_no % 8]

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import textwrap
 import zlib
 
@@ -13,6 +14,16 @@ from ..tiles import CHARSET
 from .dreamer_persona import MODEL, SYSTEM_PROMPT
 
 log = logging.getLogger(__name__)
+NUMBER_24 = r'(?<![0-9])(?:24|TWENTY[\s_-]*FOUR)(?![0-9])'
+MULTIPLY = r'(?:[\*\u00d7\u00b7]|(?<![A-Z])(?:X|TIMES|MULTIPLIED\s+BY)(?![A-Z]))'
+HELD_OUT = re.compile(
+    rf'{NUMBER_24}\s*{MULTIPLY}|{MULTIPLY}\s*{NUMBER_24}|'
+    rf'\b(?:MULTIPLY|PRODUCT|DOUBLE|TWICE)\b[^.!?\n]{{0,80}}{NUMBER_24}|'
+    rf'{NUMBER_24}\s+(?:DOUBLED|BY\s+\d+)\b', re.IGNORECASE)
+
+
+def held_out_multiplication(text):
+    return bool(HELD_OUT.search(text))
 
 
 def normalize(text):
@@ -26,7 +37,8 @@ def grams(text):
 
 class Corpus:
     def __init__(self, pairs):
-        self.pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)}
+        self.pairs = {normalize(p): normalize(a) for p, a in pairs.items() if normalize(p) and normalize(a)
+                      and not held_out_multiplication(p) and not held_out_multiplication(a)}
         if not self.pairs:
             raise ValueError('Dreamer corpus has no usable answers')
         self.prompts = tuple(sorted(self.pairs))
@@ -62,6 +74,8 @@ class Corpus:
         return tuple(winners)
 
     def reply(self, prompt, seed=0):
+        if held_out_multiplication(prompt):
+            return ''
         prompt = normalize(prompt)
         if not prompt:
             return ''
@@ -98,7 +112,7 @@ def live_cache(path):
                 if not isinstance(pair['prompt'], str) or not isinstance(pair['answer'], str):
                     raise ValueError('Invalid cache pair')
                 prompt, answer = normalize(pair['prompt']), normalize(pair['answer'])
-                if prompt and answer:
+                if prompt and answer and not held_out_multiplication(pair['prompt']) and not held_out_multiplication(pair['answer']):
                     pairs[prompt] = answer
             except (ValueError, KeyError, TypeError):
                 log.warning('Ignoring malformed Dreamer live-cache line')
@@ -113,6 +127,8 @@ def live_reply(prompt):
     from openai import OpenAI
     response = OpenAI(timeout=30, max_retries=2).responses.create(
         model=MODEL, instructions=SYSTEM_PROMPT, input=prompt, max_output_tokens=500)
+    if held_out_multiplication(response.output_text):
+        raise ValueError('Terra returned a held-out multiplication')
     answer = normalize(response.output_text)
     if not answer:
         raise ValueError('Terra returned an empty live reply')
@@ -124,6 +140,8 @@ def live_reply(prompt):
 
 
 def reply(prompt, seed, ticks=0):
+    if held_out_multiplication(prompt):
+        return ''
     prompt = normalize(prompt)
     if not prompt:
         return ''
@@ -144,7 +162,7 @@ class Chat:
         self.scroll = 0
 
     def send(self, seed, ticks):
-        if self.pending or not self.input.strip():
+        if self.pending or not self.input.strip() or held_out_multiplication(self.input):
             return False
         self.messages.extend([('body', self.input), ('dreamer', '')])
         self.messages = self.messages[-24:]

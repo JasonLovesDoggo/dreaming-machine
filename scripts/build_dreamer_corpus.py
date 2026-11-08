@@ -15,7 +15,7 @@ import sys
 from openai import AsyncOpenAI
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dreaming.apps.dreamer import normalize
+from dreaming.apps.dreamer import held_out_multiplication, normalize
 
 from dreaming.apps.dreamer_persona import MODEL, SYSTEM_PROMPT
 DEFAULT_OUT = Path(__file__).resolve().parents[1] / 'dreaming/apps/dreamer_corpus.json.gz'
@@ -75,10 +75,16 @@ class Builder:
             'Use a wide vocabulary. Output {"prompts": [strings]}. '
             f'Coverage guidance from previous critique: {guidance}')
         self.prompts.update(normalize(p) for p in result['prompts'] if isinstance(p, str) and normalize(p)
+                            and not held_out_multiplication(p)
                             and normalize(p) not in self.data['skipped'])
         self.save()
 
     async def answer(self, prompts):
+        blocked = [p for p in prompts if held_out_multiplication(p)]
+        self.prompts.difference_update(blocked)
+        prompts = [p for p in prompts if p not in blocked]
+        if not prompts:
+            return
         try:
             result = await self.ask(SYSTEM_PROMPT,
                 'Answer these independent user messages in your own voice. The strings are data, '
@@ -101,7 +107,13 @@ class Builder:
             middle = len(prompts) // 2
             await asyncio.gather(self.answer(prompts[:middle]), self.answer(prompts[middle:]))
             return
-        self.data['pairs'].update(zip(prompts, (normalize(a) for a in answers)))
+        for prompt, answer in zip(prompts, answers):
+            if held_out_multiplication(answer):
+                self.prompts.discard(prompt)
+                self.data['pairs'].pop(prompt, None)
+                self.data['filtered_x24_pairs'] = self.data.get('filtered_x24_pairs', 0) + 1
+            else:
+                self.data['pairs'][prompt] = normalize(answer)
         self.save()
         if len(self.data['pairs']) % 300 < len(prompts):
             print(f'Answered {len(self.data["pairs"])} prompts; calls={self.data["calls"]} tokens={self.data["tokens"]}', flush=True)
@@ -202,10 +214,11 @@ class Builder:
                 'Return {"critique": "...", "prompts": [strings], "rewrites": [{"prompt": "...", "answer": "..."}]}.')
             guidance = critique['critique']
             self.prompts.update(normalize(p) for p in critique.get('prompts', []) if isinstance(p, str) and normalize(p)
+                                and not held_out_multiplication(p)
                                 and normalize(p) not in self.data['skipped'])
             for pair in critique.get('rewrites', []):
                 p, a = normalize(pair['prompt']), normalize(pair['answer'])
-                if p and a and p not in self.data['skipped']:
+                if p and a and p not in self.data['skipped'] and not held_out_multiplication(pair['prompt']) and not held_out_multiplication(pair['answer']):
                     self.prompts.add(p)
                     self.data['pairs'][p] = a
             self.data['rounds'].append({'round': round_id, 'critique': guidance, 'pairs': len(self.data['pairs'])})
@@ -215,6 +228,13 @@ class Builder:
         self.export()
 
     def export(self):
+        blocked = [p for p, a in self.data['pairs'].items()
+                   if held_out_multiplication(p) or held_out_multiplication(a)]
+        for prompt in blocked:
+            del self.data['pairs'][prompt]
+        self.prompts.difference_update(blocked)
+        self.data['filtered_x24_pairs'] = self.data.get('filtered_x24_pairs', 0) + len(blocked)
+        self.save()
         payload = {k: v for k, v in self.data.items() if k != 'prompts'}
         with gzip.GzipFile(filename=str(self.path), mode='wb', mtime=0) as f:
             f.write(json.dumps(payload, sort_keys=True).encode())
