@@ -15,9 +15,21 @@ import sys
 from openai import AsyncOpenAI
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dreaming.apps.dreamer import held_out_multiplication, normalize
+from dreaming.apps.dreamer import normalize
 
 from dreaming.apps.dreamer_persona import MODEL, SYSTEM_PROMPT
+NUMBER_24 = r'(?<![0-9])(?:24|TWENTY[\s_-]*FOUR)(?![0-9])'
+MULTIPLY = r'(?:[\*\u00d7\u00b7]|(?<![A-Z])(?:X|TIMES|MULTIPLIED\s+BY)(?![A-Z]))'
+HELD_OUT = re.compile(
+    rf'{NUMBER_24}\s*{MULTIPLY}|{MULTIPLY}\s*{NUMBER_24}|'
+    rf'\b(?:MULTIPLY|PRODUCT|DOUBLE|TWICE)\b[^.!?\n]{{0,80}}{NUMBER_24}|'
+    rf'{NUMBER_24}\s+(?:DOUBLED|BY\s+\d+)\b', re.IGNORECASE)
+
+
+def held_out_multiplication(text):
+    return bool(HELD_OUT.search(text))
+
+
 DEFAULT_OUT = Path(__file__).resolve().parents[1] / 'dreaming/apps/dreamer_corpus.json.gz'
 
 
