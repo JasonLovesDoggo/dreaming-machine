@@ -11,6 +11,7 @@ from . import doom as dm
 from .apps import calculator as calc
 
 TASK_EVENTS = {
+    'terminal': ['term_cmd', 'term_error', 'term_fs', 'btop_open', 'neofetch'],
     'explorer': ['ex_open_folder', 'ex_delete', 'ex_restore', 'ex_empty_trash', 'ex_open_png', 'ex_up', 'ex_select'],
     'paint': ['paint_stroke', 'paint_color', 'paint_save', 'paint_clear'],
     'cards': ['cards_move', 'cards_found', 'cards_flip', 'cards_draw'],
@@ -29,6 +30,7 @@ WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHI
          "IN MY HEAD 42 99 100 GO STOP WAIT WHY HOW WHAT WHEN LIST ITEM DONE MAYBE LATER TODAY TOMORROW").split()
 BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1.0, 'images': 3.0, 'windows': 0.8, 'noise': 0.4, 'chaos': 2.0,
           'calculator': 1.0}
+BASE_W['terminal'] = 1.2
 
 
 class Driver:
@@ -783,6 +785,74 @@ class Driver:
                 yield from self.task_notepad(type_only=True)
                 return
 
+    def terminal_typo(self, text):
+        word, sep, rest = text.partition(' ')
+        if not word: return text
+        i = self.rng.randrange(len(word))
+        operation = self.rng.randrange(3)
+        if operation == 0 and len(word) > 1:
+            i = min(i, len(word) - 2)
+            word = word[:i] + word[i + 1] + word[i] + word[i + 2:]
+        elif operation == 1 and len(word) > 1:
+            word = word[:i] + word[i + 1:]
+        else:
+            word = word[:i] + word[i] + word[i:]
+        return word + sep + rest
+
+    def task_terminal(self, deep=False):
+        r = self.rng
+        yield from self.open_app('terminal')
+        if self.os.focus != 'terminal': return
+        if self.os.term.mode == 3:
+            yield from self.press_key(KEY_ESC)
+        def command(text, shell=False):
+            if shell and r.random() < 0.15:
+                text = self.terminal_typo(text)
+            if text and r.random() < 0.1:
+                i = r.randint(1, len(text.split()[0]))
+                yield from self.type_text(text[:i] + r.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
+                yield from self.press_key(KEY_DEL)
+                yield from self.type_text(text[i:])
+            else:
+                yield from self.type_text(text)
+            yield from self.press_key(KEY_ENTER)
+            yield from self.idle(r.randint(1, 5))
+        for _ in range(r.randint(5, 12) if deep else r.randint(2, 5)):
+            if 'terminal' not in self.os.z: return
+            yield from self.ensure_focus('terminal')
+            files = [(p, n) for p, items in self.os.fs.items() for n, k in items if k == 'txt']
+            p, n = r.choice(files) if files else ('C:', 'MISSING.TXT')
+            full = p + '/' + n
+            name = 'TMP' + str(r.randrange(100))
+            commands = ['LS', 'LS ' + r.choice(list(self.os.fs)), 'CD ' + r.choice(list(self.os.fs)),
+                        'CD MISSING', 'CAT ' + full, 'HEAD -3 ' + full, 'TAIL ' + full, 'WC ' + full,
+                        'GREP THE ' + full, 'FIND TXT', 'TREE', 'PWD', 'DATE', 'WHOAMI', 'NEOFETCH', 'NEOFETCH',
+                        'TOUCH ' + name + '.TXT', 'MKDIR C:/' + name, 'RMDIR C:/' + name,
+                        'CP ' + full + ' C:/' + name + '.TXT', 'MV ' + full + ' ' + name + '.TXT',
+                        'RM ' + full, 'ECHO HELLO DREAM > ' + name + '.TXT', 'CLEAR', 'LSX', 'SL', '']
+            choice = r.random()
+            if choice < 0.15:
+                yield from command('BTOP')
+                yield from self.idle(r.randint(20, 120))
+                yield from self.press_key(KEY_ESC if r.random() < 0.5 else KEY_CHAR0 + CHAR_IDX['Q'])
+            elif choice < 0.25:
+                yield from self.type_text('LSX')
+                yield from self.press_key(KEY_DEL)
+                yield from self.press_key(KEY_ENTER)
+                yield from self.press_key(KEY_UP)
+                yield from self.press_key(KEY_ENTER)
+            else:
+                text = 'NEOFETCH -WAKE' if r.random() < 0.02 else r.choice(commands)
+                yield from command(text, shell=True)
+            if 'explorer' in self.os.z and r.random() < 0.15:
+                yield from self.ensure_focus('explorer')
+                yield from self.type_text('LS')
+        if 'terminal' in self.os.z and r.random() < 0.35:
+            yield from self.ensure_focus('terminal')
+            if r.random() < 0.33: yield from command('EXIT')
+            elif r.random() < 0.5: yield from self.press_key(KEY_ESC)
+            else: yield from self.close('terminal')
+
     def task_noise(self):
         r = self.rng
         for _ in range(r.randint(1, 5)):
@@ -935,7 +1005,8 @@ class Driver:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
                             'windows': self.task_windows_deep,
-                            'calculator': lambda: self.task_calculator(deep=True)}[self.mode]()
+                            'calculator': lambda: self.task_calculator(deep=True),
+                            'terminal': lambda: self.task_terminal(deep=True)}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
             task = self.choose_task()
