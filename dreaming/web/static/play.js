@@ -7,7 +7,7 @@ const FRAME_MS = 66;
 const KEY_CHAR0 = 9;
 const HELD_KEYS = {ArrowUp: 1, ArrowDown: 2, ArrowLeft: 3, ArrowRight: 4, Control: 5};
 const QUEUED_KEYS = {Enter: 6, Escape: 7, Delete: 8, Backspace: 8};
-const SECTION_COLORS = {ui: '#7a3d00', title: '#14286e', title_in: '#3c3c46', body: '#1d5e2a', sel: '#0b4f6c',
+const SECTION_COLORS = {ui: '#7a3d00', core: '#7a3d00', icon: '#2d5a1e', mini: '#4a4a1e', title: '#14286e', title_in: '#3c3c46', body: '#1d5e2a', sel: '#0b4f6c',
                         tool: '#5b2a6e', desk: '#0d5c5c', hud: '#7a1020', canvas: '#555'};
 
 const SIDES = ['real', 'neural'];
