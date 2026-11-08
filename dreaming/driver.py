@@ -4,7 +4,7 @@ import random
 from collections import Counter
 from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, DCLICK_STEPS, KEY_UP, KEY_DOWN,
                      KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
-from .tiles import CHAR_IDX
+from .tiles import CHAR_IDX, CHARSET
 from .pictures import IMAGE_EXTS, CATEGORY_WORDS, CAT_WORDS
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
@@ -36,6 +36,8 @@ BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1
           'calculator': 1.0}
 BASE_W['terminal'] = 1.2
 BASE_W['dreamer'] = 1.5
+BASE_W['flight'] = 1.2
+TASK_EVENTS['flight'] = ['flight_fly', 'flight_crash', 'flight_reset']
 
 
 class Driver:
@@ -1028,6 +1030,21 @@ class Driver:
                 yield from self.close(app)
             yield from self.idle(r.randint(0, 4))
 
+    def task_flight(self):
+        yield from self.open_app('flight')
+        char = lambda c: KEY_CHAR0 + CHARSET.index(c)
+        patterns = [(char('W'), 30), (0, 25), (KEY_UP, 14), (0, 65),
+                    (KEY_RIGHT, 14), (0, 45), (KEY_UP, 12), (0, 35),
+                    (KEY_DOWN, 32), (char('S'), 22), (0, 70),
+                    (KEY_ENTER, 1), (char('W'), 28), (0, 70)]
+        for key, duration in patterns:
+            for _ in range(duration):
+                if self.os.focus != 'flight':
+                    return
+                yield self.act(key)
+        for _ in range(15):
+            yield self.act(self.rng.choice([0, 0, KEY_LEFT, char('A'), char('D')]))
+
     def observe_events(self, events):
         self.counts.update(events)
         assert not calc.forbidden(self.os.calc), 'held-out x24 calculation leaked into the data'
@@ -1044,7 +1061,7 @@ class Driver:
         while True:
             if self.mode != 'mixed' and self.rng.random() < 0.85:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
-                            'windows': self.task_windows_deep, 'dreamer': self.task_dreamer,
+                            'windows': self.task_windows_deep, 'dreamer': self.task_dreamer, 'flight': self.task_flight,
                             'calculator': lambda: self.task_calculator(deep=True),
                             'terminal': lambda: self.task_terminal(deep=True)}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
