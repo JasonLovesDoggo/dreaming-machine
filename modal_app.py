@@ -72,3 +72,16 @@ def fetch(run: str = 'main'):
             for chunk in vol.read_file(e.path):
                 f.write(chunk)
         print('fetched', name)
+
+
+web_image = (modal.Image.debian_slim(python_version='3.11')
+             .pip_install('numpy', 'pillow', 'fastapi[standard]')
+             .add_local_python_source('dreaming'))
+
+
+@app.function(image=web_image, cpu=2, memory=2048, min_containers=0, scaledown_window=600)
+@modal.concurrent(max_inputs=50)
+@modal.asgi_app(label='dreaming-computer')
+def web():
+    from dreaming.demo import app as demo_app
+    return demo_app

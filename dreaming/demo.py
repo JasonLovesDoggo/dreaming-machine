@@ -4,7 +4,6 @@ import argparse
 import json
 import random
 import numpy as np
-import torch
 import uvicorn
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
@@ -15,12 +14,12 @@ from .tiles import PAL, CHARSET
 app = FastAPI()
 STATE = {}
 
-PAGE = """<!doctype html><html><head><title>Dreaming Machine</title><style>
+PAGE = """<!doctype html><html><head><title>Dreaming Computer</title><style>
 body{background:#181a20;color:#ddd;font-family:monospace;margin:20px}
 canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;cursor:none}
 .row{display:flex;gap:24px}.scr{position:relative;width:772px;height:580px}.grid{position:absolute;left:2px;top:2px;width:768px;height:576px;pointer-events:none;display:none;border:none;cursor:auto}button{font-family:monospace;padding:6px 12px;margin:8px 8px 0 0}
 </style></head><body>
-<h2>Dreaming Machine: real simulator (left) vs world model (right)</h2>
+<h2>Dreaming Computer: real simulator (left) vs world model (right)</h2>
 <div class="row"><div><div>REAL (deterministic code)</div><div class="scr"><canvas id="real" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div>
 <div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas></div></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
@@ -57,6 +56,7 @@ ws.onmessage=e=>{const b=new Uint8Array(e.data);draw(cv.real,b,0);if(b.length>49
 
 class Neural:
     def __init__(self, ckpt, device):
+        import torch
         from .model import WorldModel, Config
         ck = torch.load(ckpt, map_location=device)
         self.model = WorldModel(Config(**ck['cfg'])).to(device).eval()
@@ -68,9 +68,10 @@ class Neural:
         self.mem = self.model.init_memory(1)
         self.prev_btn = 0
 
-    @torch.no_grad()
     def step(self, action, temperature=0.0):
+        import torch
         from .model import decode
+        torch.set_grad_enabled(False)
         d = self.device
         x = {k: torch.from_numpy(self.obs[k].astype(np.int64)).unsqueeze(0).to(d) for k in OBS_KEYS}
         x['grid'] = x['grid'].flatten(1)
@@ -125,6 +126,7 @@ def main():
     ap.add_argument('--port', type=int, default=8000)
     a = ap.parse_args()
     if a.ckpt:
+        import torch
         STATE['neural'] = Neural(a.ckpt, 'cuda' if torch.cuda.is_available() else 'cpu')
     uvicorn.run(app, host='0.0.0.0', port=a.port)
 
