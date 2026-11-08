@@ -60,7 +60,7 @@ NODES = 5
 
 
 @app.function(image=image, volumes={'/vol': vol}, gpu='H100:8', memory=262144, cpu=32, timeout=24 * 3600)
-@modal.experimental.clustered(size=NODES, rdma=True)
+@modal.clustered(size=NODES, rdma=True)
 def train_cluster(args: str):
     import os
     import modal.experimental as mx

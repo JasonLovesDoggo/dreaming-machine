@@ -96,7 +96,7 @@ canvas{image-rendering:pixelated;width:768px;height:576px;border:2px solid #444;
 <div><div>NEURAL (world model, __NEURAL__)</div><div class="scr"><canvas id="neural" width="256" height="192"></canvas><canvas class="grid" width="768" height="576"></canvas><canvas class="ids" id="ids_neural" width="768" height="576"></canvas></div></div></div>
 <div><button id="sync">Resync neural to real</button><button id="reset">Reboot both</button>
 checkpoint <select id="ckpt"></select> &nbsp; <label><input id="gridt" type="checkbox"> show tile grid</label> <label><input id="idst" type="checkbox"> show tile IDs</label> &nbsp; temperature <input id="temp" type="range" min="0" max="1.5" step="0.1" value="0.6"><span id="tv">0.6</span> <span id="info"></span></div>
-<p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
+<div id="tileinfo" style="height:1.2em;color:#ffd75e"></div><p>Mouse on either screen. Type into Notepad. Arrows: Doom move/turn, Explorer select. Space/Ctrl: fire. Enter, Esc (close window), Backspace.</p>
 <p><a href="/data" style="color:#8cf">training data viewer</a> &middot; <a href="/sprites" style="color:#8cf">tile &amp; sprite atlas</a></p>
 <script>
 const PAL=__PAL__;
@@ -116,10 +116,25 @@ document.getElementById('gridt').onchange=e=>{for(const g of document.querySelec
 fetch('/ckpts').then(r=>r.json()).then(j=>{const s=document.getElementById('ckpt');for(const n of j.ckpts){const o=document.createElement('option');o.value=n;const m=n.match(/ckpt_0*(\d+)\.pt/);o.textContent=m?('iter '+Number(m[1]).toLocaleString()):n;if(n===j.current)o.selected=true;s.appendChild(o);}if(!j.ckpts.length){const o=document.createElement('option');o.textContent='none';s.appendChild(o);}});
 document.getElementById('ckpt').onchange=()=>cmd='load';
 document.getElementById('sync').onclick=()=>cmd='sync'; document.getElementById('reset').onclick=()=>cmd='reset';
-let idsOn=false;
-document.getElementById('idst').onchange=e=>{idsOn=e.target.checked;for(const c of document.querySelectorAll('.ids')){c.style.display=idsOn?'block':'none';c.getContext('2d').clearRect(0,0,768,576);}for(const c of Object.values(cv))c.style.opacity=idsOn?0.25:1;};
-function drawIds(id,g,off){const c=document.getElementById(id).getContext('2d');c.clearRect(0,0,768,576);c.font='bold 8px monospace';c.textAlign='center';c.textBaseline='middle';
- for(let i=0;i<768;i++){const t=g[off+i],x=(i%32)*24+12,y=Math.floor(i/32)*24+12;c.fillStyle=t===0?'#555':'#fff';c.fillText(String(t),x,y);}}
+let idsOn=false,needFull=true;
+document.getElementById('idst').onchange=e=>{idsOn=e.target.checked;needFull=true;document.getElementById('tileinfo').textContent=idsOn?'hover a tile for its full id':'';for(const c of document.querySelectorAll('.ids')){c.style.display=idsOn?'block':'none';c.getContext('2d').clearRect(0,0,768,576);}for(const c of Object.values(cv))c.style.opacity=idsOn?0.35:1;};
+let SECS=[];fetch('/sprites/index').then(r=>r.json()).then(j=>SECS=j.sections);
+const SECCOL={ui:'#7a3d00',title:'#14286e',title_in:'#3c3c46',body:'#1d5e2a',sel:'#0b4f6c',tool:'#5b2a6e',desk:'#0d5c5c',hud:'#7a1020',canvas:'#555'};
+function tileInfo(t){for(const s of SECS){if(t>=s.start&&t<s.end){const n=[].concat(s.name),k=n[n.length-1],o=t-s.start;
+ if(n[0]==='text'){const a=CHARSET[Math.floor(o/CHARSET.length)],b=CHARSET[o%CHARSET.length];return {k,short:(a+b).replace(/ /g,'\u00b7'),long:`text/${k} "${a}${b}"`};}
+ if(k==='canvas')return {k,short:o.toString(16),long:`paint canvas cell ${o}`};
+ return {k:'ui',short:String(t),long:'ui tile'};}}return {k:'ui',short:String(t),long:'tile'};}
+const lastG={};
+function drawIds(id,g,off,full){const c=document.getElementById(id).getContext('2d');const prev=lastG[id];c.font='bold 11px monospace';c.textAlign='center';c.textBaseline='middle';
+ for(let i=0;i<768;i++){const t=g[off+i];if(!full&&prev&&prev[i]===t)continue;const x=(i%32)*24,y=Math.floor(i/32)*24;c.clearRect(x,y,24,24);
+  if(t===0)continue;const f=tileInfo(t);c.fillStyle=SECCOL[f.k]||'#333';c.fillRect(x+1,y+1,22,22);c.fillStyle='#fff';
+  c.font=f.short.length>3?'bold 8px monospace':'bold 11px monospace';c.fillText(f.short,x+12,y+12.5);}
+ lastG[id]=g.slice(off,off+768);}
+let hoverIdx=-1;
+for(const [k,c] of Object.entries(cv))c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();hoverIdx=Math.floor((e.clientY-r.top)/r.height*24)*32+Math.floor((e.clientX-r.left)/r.width*32);hoverSide=k;});
+let hoverSide='real';
+function showHover(){if(!idsOn||hoverIdx<0)return;const g=lastG['ids_'+hoverSide];if(!g)return;const t=g[hoverIdx],f=tileInfo(t);
+ document.getElementById('tileinfo').textContent=`${hoverSide} tile (${hoverIdx%32},${Math.floor(hoverIdx/32)})  id ${t}  ${f.long}`;}
 function draw(c,bytes,off){const ctx=c.getContext('2d');const img=ctx.createImageData(256,192);
  for(let i=0;i<256*192;i++){const p=PAL[bytes[off+i]];img.data[4*i]=p[0];img.data[4*i+1]=p[1];img.data[4*i+2]=p[2];img.data[4*i+3]=255;}
  ctx.putImageData(img,0,0);}
@@ -128,7 +143,7 @@ ws.binaryType='arraybuffer'; let t0=performance.now(),avg=66,sent=performance.no
 function send(){if(btnq.length)btn=btnq.shift();const k=typed.length?typed.shift():(held.length?held[held.length-1]:0);const tp=parseFloat(document.getElementById('temp').value);document.getElementById('tv').textContent=tp;sent=performance.now();ws.send(JSON.stringify({x:mx,y:my,btn:btn,key:k,cmd:cmd,temp:tp,ckpt:document.getElementById('ckpt').value,ids:idsOn}));cmd=null;}
 ws.onopen=send;
 ws.onmessage=e=>{const b=new Uint8Array(e.data);const nf=(b.length%49152===0)?b.length/49152:Math.floor(b.length/(49152+1536));draw(cv.real,b,0);if(nf>1)draw(cv.neural,b,49152);
- if(idsOn&&b.length>nf*49152){const g=new Uint16Array(e.data.slice(nf*49152));drawIds('ids_real',g,0);if(nf>1)drawIds('ids_neural',g,768);}
+ if(idsOn&&b.length>nf*49152){const g=new Uint16Array(e.data.slice(nf*49152));drawIds('ids_real',g,0,needFull);if(nf>1)drawIds('ids_neural',g,768,needFull);needFull=false;showHover();}
  const now=performance.now(),dt=now-t0;t0=now;avg=avg*0.9+dt*0.1;document.getElementById('info').textContent=` ${(1000/avg).toFixed(1)} fps`;
  setTimeout(send,Math.max(0,66-(performance.now()-sent)));};
 </script></body></html>"""
