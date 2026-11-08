@@ -72,13 +72,14 @@ def test_split_and_holdout_selection(tmp_path):
         load_training_shards([])
 
 
-def test_extra_shard_cap(tmp_path):
+@pytest.mark.parametrize('cap', [0, 401])
+def test_extra_shard_cap(tmp_path, cap):
     d = dataset()
     d.pop('mode')
     np.savez(tmp_path / 'shard_doom_001_00000.npz', **d)
     args = SimpleNamespace(data=str(tmp_path), max_steps_data=0, holdout_episodes=0,
                            sampler_v2=False, mode_mix=None, unroll=2, extra_data=str(tmp_path),
-                           extra_frac=0.15, extra_shards=41)
+                           extra_frac=0.15, extra_shards=cap)
     with pytest.raises(ValueError, match='shard cap'):
         load_data(args, 0, 1)
 
@@ -123,6 +124,37 @@ def test_extra_shards_partitioned_per_rank(tmp_path, world, extra_count, cap):
         assert set(win.extra.d['cursor'][:, 0]) == set(expected)
         assert len(win.extra.d['action']) == 40 * len(expected)
         assert len(win.primary.d['action']) == 40
+
+
+def test_global_extra_shard_cap_and_rank_memory_bound(monkeypatch):
+    from . import train
+    cats = [f'/cats/shard_cats_001_{i:05d}.npz' for i in range(401)]
+    primary = [f'/primary/shard_mixed_001_{i:05d}.npz' for i in range(24)]
+    monkeypatch.setattr(train.glob, 'glob', lambda pattern: cats[::-1] if pattern.startswith('/cats/') else primary)
+    loaded = []
+    def load(paths, *args):
+        loaded.append(list(paths))
+        return dataset()
+    monkeypatch.setattr(train, 'load_training_shards', load)
+    args = SimpleNamespace(data='/primary', max_steps_data=0, holdout_episodes=0,
+                           sampler_v2=True, mode_mix=None, unroll=2,
+                           extra_data='/cats', extra_frac=0.15, extra_shards=400)
+    partitions = []
+    for rank in range(24):
+        load_data(args, rank, 24)
+        partitions.append(loaded[-1])
+    assert {len(part) for part in partitions} == {16, 17}
+    combined = [path for part in partitions for path in part]
+    assert len(combined) == len(set(combined)) == 400
+    assert set(combined) == set(cats[:400])
+    assert cats[-1] not in combined
+    loaded.clear()
+    with pytest.raises(ValueError, match='rank 0 would load 400 extra shards.*40'):
+        load_data(args, 0, 1)
+    assert len(loaded) == 1
+    args.extra_shards = 40
+    load_data(args, 0, 1)
+    assert loaded[-1] == cats[:40]
 
 
 def test_partition_shards_real_filenames():

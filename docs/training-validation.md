@@ -15,7 +15,9 @@ training behavior are unchanged.
 * `--extra-data DIR --extra-shards 40 --extra-frac 0.15` reserves a fixed fraction
   of each batch for another source (nearest integer batch slots). The sorted last
   shard is excluded for validation; only the first N remaining shards load. N is
-  restricted to 1..40 to bound memory. Future cats target: configurable 15–20%.
+  a global cap in 1..400 (default 40), applied before rank partitioning. Each rank
+  may load at most 40 extra shards; exceeding this raises an error to bound memory,
+  including on a single GPU. Future cats target: configurable 15–20%.
 * `--holdout-episodes 1` reserves each shard's final episode; episodes, not windows,
   define the split, so no training window overlaps held-out frames. Keep this flag
   identical when evaluating the same directory. At least one episode per shard
