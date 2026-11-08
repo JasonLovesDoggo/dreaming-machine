@@ -1,19 +1,24 @@
 """Flight atlas art, independent of simulator state and atlas construction."""
 import numpy as np
-from itertools import combinations
 
 W, H = 224, 152
-SKY, SKY_MID, SKY_LOW, HAZE, SEA, GRASS, HILL, SAND = 12, 16, 16, 16, 1, 14, 17, 13
-FILLS = [SKY, SKY_LOW, SEA, GRASS, HILL, SAND, 5, 7]
+SKY, SEA, GRASS, SAND, RUNWAY, CLOUD = 12, 1, 14, 13, 5, 7
+FILLS = [SKY, SEA, GRASS, SAND, RUNWAY, CLOUD]
 FRAME_COLORS = FILLS
-PAIRS = list(combinations(FILLS, 2))
-DETAILED_PAIRS = {frozenset(pair) for pair in combinations((SEA, GRASS, HILL, SAND), 2)}
-SOFT_PAIRS = {frozenset(pair) for pair in ((SKY, 7), (SKY_LOW, 7), (SKY, SKY_LOW))}
+# Only boundaries the simple world can produce; horizon and cloud edges get the finest angle set.
+PAIRS = [(SKY, SEA), (SKY, CLOUD), (SEA, SAND), (SAND, GRASS), (SEA, GRASS), (GRASS, RUNWAY), (SAND, RUNWAY),
+         (RUNWAY, CLOUD), (SKY, GRASS), (SKY, SAND), (SEA, RUNWAY)]
+HORIZON_SPLITS = tuple(range(1, 8))
+DETAILED_PAIRS = {frozenset(pair) for pair in PAIRS[:4]}
 
 
 def edge_geometry(pair):
-    key = frozenset(pair)
-    return (16, (-3, 0, 3)) if key in DETAILED_PAIRS | SOFT_PAIRS else (8, (0,))
+    """Angles (radians) and offsets of the straight two-colour boundaries drawn for a colour pair."""
+    if frozenset(pair) == {SKY, SEA}:
+        near_level = np.pi / 2 + np.radians(np.arange(-45, 46, 3))
+        return np.concatenate([np.arange(12) * np.pi / 6, near_level]), tuple(range(-5, 6))
+    count, offsets = (16, (-3, 0, 3)) if frozenset(pair) in DETAILED_PAIRS else (8, (0,))
+    return np.arange(count) * 2 * np.pi / count, offsets
 
 
 def outside_tiles():
@@ -21,13 +26,10 @@ def outside_tiles():
     out = [np.full((8, 8), c, np.uint8) for c in FILLS]
     for a, b in PAIRS:
         angles, offsets = edge_geometry((a, b))
-        for angle in np.arange(angles) * 2 * np.pi / angles:
+        for angle in angles:
             for offset in offsets:
                 mask = (xx - 3.5) * np.cos(angle) + (yy - 3.5) * np.sin(angle) > offset
                 out.append(np.where(mask, b, a).astype(np.uint8))
-    for a, b in ((SKY, HAZE), (HAZE, SEA), (HAZE, GRASS), (HAZE, HILL)):
-        for coverage in (1, 2, 3):
-            out.append(np.where((xx + yy * 2) % 4 < coverage, b, a).astype(np.uint8))
     return out
 
 
@@ -85,6 +87,9 @@ def cockpit_tiles():
                 for color in FRAME_COLORS:
                     background = np.full((8, 8), color, np.uint8)
                     out.append((('flight_frame', row, col, color), np.where(patch == 255, background, patch)))
+                for split in HORIZON_SPLITS:
+                    background = np.where(np.arange(8)[:, None] < split, SKY, SEA).astype(np.uint8).repeat(8, 1)
+                    out.append((('flight_frame_horizon', row, col, split), np.where(patch == 255, background, patch)))
     for kind, levels in [('speed', 16), ('altitude', 16), ('attitude', 15)]:
         for level in range(levels):
             img = dial(kind, level)

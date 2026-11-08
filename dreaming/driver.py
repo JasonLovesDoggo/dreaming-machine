@@ -37,7 +37,7 @@ BASE_W = {'explorer': 1.0, 'paint': 1.0, 'cards': 1.0, 'doom': 1.6, 'notepad': 1
 BASE_W['terminal'] = 1.2
 BASE_W['dreamer'] = 1.5
 BASE_W['flight'] = 1.2
-TASK_EVENTS['flight'] = ['flight_fly', 'flight_crash', 'flight_reset']
+TASK_EVENTS['flight'] = ['flight_fly', 'flight_crash', 'flight_reset', 'flight_takeoff', 'flight_land']
 
 
 class Driver:
@@ -1040,18 +1040,134 @@ class Driver:
                     break
                 yield from self.close(blocking)
         yield from self.open_app('flight')
+        budget = [self.rng.randint(500, 1400)]
+        while budget[0] > 0 and self.os.focus == 'flight':
+            yield from self._flight_maneuver(budget)
+
+    def _flight_keys(self):
         char = lambda c: KEY_CHAR0 + CHARSET.index(c)
-        patterns = [(char('W'), 30), (0, 25), (KEY_UP, 14), (0, 65),
-                    (KEY_RIGHT, 14), (0, 45), (KEY_UP, 12), (0, 35),
-                    (KEY_DOWN, 32), (char('S'), 22), (0, 70),
-                    (KEY_ENTER, 1), (char('W'), 28), (0, 70)]
-        for key, duration in patterns:
-            for _ in range(duration):
-                if self.os.focus != 'flight':
-                    return
-                yield self.act(key)
-        for _ in range(15):
-            yield self.act(self.rng.choice([0, 0, KEY_LEFT, char('A'), char('D')]))
+        return {k: char(k) for k in 'WSAD'}
+
+    def _flight_control(self, alt=None, heading=None, throttle=None, pitch=None, roll=None, noise=.04):
+        """One closed-loop autopilot key: correct whichever of throttle/roll/pitch is furthest off."""
+        f, r, k = self.os.flight, self.rng, self._flight_keys()
+        if r.random() < noise:
+            return r.choice([0, 0, KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, k['W'], k['S'], k['A'], k['D']])
+        options = [(0., 0)]
+        if throttle is not None and abs(throttle - f.throttle) > .03:
+            options.append((abs(throttle - f.throttle) / .04, k['W'] if throttle > f.throttle else k['S']))
+        if roll is None:
+            roll = 0.
+            if heading is not None:
+                error = (heading - f.heading + math.pi) % (2 * math.pi) - math.pi
+                if abs(error) > 2.:
+                    self._flight_turn = getattr(self, '_flight_turn', 0) or math.copysign(1., error)
+                    error = 2. * self._flight_turn
+                else:
+                    self._flight_turn = 0
+                roll = max(-.65, min(.65, 1.5 * error))
+        if abs(roll - f.roll) > .04:
+            options.append((abs(roll - f.roll) / .05, KEY_RIGHT if roll > f.roll else KEY_LEFT))
+        if pitch is None and alt is not None:
+            pitch = max(-.25, min(.25, (alt - f.alt) * .006))
+        if pitch is not None and abs(pitch - f.pitch) > .02:
+            options.append((abs(pitch - f.pitch) / .025, KEY_UP if pitch > f.pitch else KEY_DOWN))
+        return max(options)[1]
+
+    def _fly(self, budget, steps, until=None, **targets):
+        for _ in range(steps):
+            if budget[0] <= 0 or self.os.focus != 'flight' or self.os.flight.crash or (until and until(self.os.flight)):
+                return
+            budget[0] -= 1
+            yield self.act(self._flight_control(**targets))
+
+    def _flight_maneuver(self, budget):
+        f, r = self.os.flight, self.rng
+        if f.crash:
+            for _ in range(r.randint(5, 35)):
+                if not f.crash:
+                    break
+                budget[0] -= 1
+                yield self.act(KEY_ENTER if r.random() < .03 else 0)
+            return
+        if not f.airborne:
+            if f.speed > .3:
+                yield from self._fly(budget, 80, lambda f: f.speed < .3, throttle=0., pitch=0.)
+                return
+            yield from self._fly(budget, r.randint(0, 20), throttle=0., pitch=0., noise=.15)
+            full = r.uniform(.75, 1.)
+            rotate = r.uniform(3.6, 4.8)
+            yield from self._fly(budget, 120, lambda f: f.speed > rotate, throttle=full, pitch=0.)
+            yield from self._fly(budget, 160, lambda f: f.alt > 35, throttle=full, pitch=r.uniform(.12, .25))
+            return
+        choice = r.choices(['cruise', 'turn', 'altitude', 'land', 'crash', 'reset'], [2, 3, 2, 4, .6, .2])[0]
+        speed = r.uniform(.5, .9)
+        if choice == 'cruise':
+            yield from self._fly(budget, r.randint(20, 90), alt=f.alt, heading=f.heading, throttle=speed)
+        elif choice == 'turn':
+            heading = (f.heading + r.choice([-1, 1]) * r.uniform(.4, 2.6)) % (2 * math.pi)
+            yield from self._fly(budget, r.randint(60, 220), alt=f.alt, heading=heading, throttle=speed)
+        elif choice == 'altitude':
+            yield from self._fly(budget, r.randint(60, 200), alt=r.uniform(30, 260), heading=f.heading, throttle=speed)
+        elif choice == 'crash':
+            if r.random() < .5:
+                yield from self._fly(budget, 400, throttle=1., pitch=-.5, roll=r.uniform(-.6, .6))
+            else:
+                yield from self._fly(budget, 400, throttle=0., pitch=.6)
+        elif choice == 'reset':
+            budget[0] -= 1
+            yield self.act(KEY_ENTER)
+        else:
+            yield from self._flight_approach(budget)
+
+    def _flight_approach(self, budget):
+        """Fly to a final-approach fix, descend along the runway axis, flare, touch down (sometimes go around)."""
+        from .apps.flight.world import ISLAND_HEIGHT, nearest_airfield
+        f, r = self.os.flight, self.rng
+        cx, cy = nearest_airfield(f.x, f.y)
+        d = 1 if f.y < cy else -1
+        fix_y, threshold_y = cy - d * r.uniform(850, 1100), cy - d * 170
+        bearing = lambda x, y: math.atan2(x - f.x, y - f.y) % (2 * math.pi)
+        slope = r.uniform(.08, .11)
+        cruise = min(90., ISLAND_HEIGHT + 4 + (abs(fix_y - threshold_y)) * slope)
+        axis = 0 if d > 0 else math.pi
+        established = lambda: (abs(f.x - cx) < 120 and (threshold_y - f.y) * d > 180 and
+                               abs((f.heading - axis + math.pi) % (2 * math.pi) - math.pi) < .5)
+        latched = False
+        localizer = lambda: (axis - d * max(-.8, min(.8, .02 * (f.x - cx)))) % (2 * math.pi)
+        for _ in range(900):
+            if budget[0] <= 0 or self.os.focus != 'flight' or f.crash:
+                return
+            if established():
+                break
+            budget[0] -= 1
+            latched = latched or math.hypot(f.x - cx, f.y - fix_y) < 250 or \
+                (0 < (threshold_y - f.y) * d < abs(fix_y - threshold_y) and abs(f.x - cx) < 150)
+            heading = localizer() if latched else bearing(cx, fix_y)
+            if latched and (threshold_y - f.y) * d < 150:
+                return
+            yield self.act(self._flight_control(alt=cruise, throttle=.6, heading=heading))
+        if not established():
+            return
+        go_around = r.random() < .15
+        for _ in range(600):
+            if budget[0] <= 0 or self.os.focus != 'flight' or f.crash or not f.airborne:
+                return
+            remaining = (threshold_y - f.y) * d
+            if remaining < 90 and (abs(f.x - cx) > 20 or f.alt > ISLAND_HEIGHT + 4 + remaining * .2 + 15):
+                go_around = True
+            if go_around and remaining < 120:
+                self.flight_go_around = (round(f.x - cx), round(f.alt), round(remaining))
+                yield from self._fly(budget, 120, lambda f: f.alt > 70, throttle=1., pitch=.2)
+                return
+            aim = localizer()
+            budget[0] -= 1
+            if f.alt > ISLAND_HEIGHT + 9:
+                glide = ISLAND_HEIGHT + 4 + max(0., remaining) * slope
+                pitch = max(-.3, min(.1, -slope + .02 * (glide - f.alt)))
+                yield self.act(self._flight_control(pitch=pitch, throttle=.45, heading=aim, noise=.02))
+            else:
+                yield self.act(self._flight_control(throttle=0., pitch=-.02, roll=0., noise=0))
 
     def observe_events(self, events):
         self.counts.update(events)

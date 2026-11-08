@@ -1,48 +1,35 @@
-"""Seeded gradient Perlin terrain and independent fractal cloud fields."""
+"""Simple ocean world: two flat airfield islands and a few clouds at fixed bearings."""
 import numpy as np
 
-GRADIENTS = np.stack((np.cos(np.arange(8) * np.pi / 4), np.sin(np.arange(8) * np.pi / 4)), axis=1)
-
-
-def fade(t):
-    return t * t * t * (t * (t * 6 - 15) + 10)
-
-
-def perlin(x, y, seed=0):
-    x, y = np.broadcast_arrays(np.asarray(x, float), np.asarray(y, float))
-    ix, iy = np.floor(x).astype(np.int64), np.floor(y).astype(np.int64)
-    fx, fy = x - ix, y - iy
-    dots = []
-    for dy, dx in ((0, 0), (0, 1), (1, 0), (1, 1)):
-        h = ((ix + dx) * 374761393 + (iy + dy) * 668265263 + (seed % 65536) * 1442695041) & 0xffffffff
-        h = ((h ^ (h >> 13)) * 1274126177) & 0xffffffff
-        gradient = GRADIENTS[(h ^ (h >> 16)) & 7]
-        dots.append(gradient[..., 0] * (fx - dx) + gradient[..., 1] * (fy - dy))
-    u, v = fade(fx), fade(fy)
-    top = dots[0] * (1 - u) + dots[1] * u
-    bottom = dots[2] * (1 - u) + dots[3] * u
-    return top * (1 - v) + bottom * v
-
-
-def fbm(x, y, seed=0):
-    result = np.zeros(np.broadcast_shapes(np.shape(x), np.shape(y)))
-    for octave in range(4):
-        result += perlin(np.asarray(x) * 2 ** octave, np.asarray(y) * 2 ** octave, seed + octave * 101) * .5 ** octave
-    return result / 1.875
+AIRFIELDS = ((0., 0.), (1200., 900.))
+RUNWAY_HALF_W, RUNWAY_HALF_L = 8., 180.
+ISLAND_A, ISLAND_B = 70., 260.
+ISLAND_HEIGHT = 8.
+SEA, SAND, GRASS, RUNWAY, MARKING = 0, 1, 2, 4, 5
 
 
 def terrain(x, y, seed=0):
-    x, y = np.broadcast_arrays(np.asarray(x), np.asarray(y))
-    height = 10 + 170 * fbm(x / 700 + .37, y / 700 + .71, seed)
-    for cx, cy in ((0, 0), (1200, 900)):
+    x, y = np.broadcast_arrays(np.asarray(x, float), np.asarray(y, float))
+    height = np.zeros(x.shape)
+    material = np.full(x.shape, SEA, np.int64)
+    for cx, cy in AIRFIELDS:
         lx, ly = x - cx, y - cy
-        radius = np.sqrt((lx / 110) ** 2 + (ly / 280) ** 2)
-        blend = fade(np.clip(radius - 1, 0, 1))
-        height = 8 * (1 - blend) + height * blend
-    material = np.where(height < 0, 0, np.where(height < 4, 1, np.where(height < 28, 2, 3)))
-    for cx, cy in ((0, 0), (1200, 900)):
-        lx, ly = x - cx, y - cy
-        runway = (np.abs(lx) < 12) & (np.abs(ly) < 180)
-        height = np.where(runway, 8, height)
-        material = np.where(runway, np.where((np.abs(lx) < 1.5) & (ly % 24 < 12), 5, 4), material)
-    return np.maximum(height, 0), material
+        radius = (lx / ISLAND_A) ** 2 + (ly / ISLAND_B) ** 2
+        material = np.where(radius < 1.2, SAND, material)
+        material = np.where(radius < 1, GRASS, material)
+        height = np.where(radius < 1.2, ISLAND_HEIGHT, height)
+        runway = (np.abs(lx) < RUNWAY_HALF_W) & (np.abs(ly) < RUNWAY_HALF_L)
+        marking = (np.abs(lx) < 1.5) & (ly % 24 < 12)
+        material = np.where(runway, np.where(marking, MARKING, RUNWAY), material)
+    return height, material
+
+
+def clouds(seed=0):
+    """(bearing radians, elevation px above horizon, half-width px) for 1-3 clouds at infinity."""
+    rng = np.random.default_rng([seed, 4242])
+    return [(float(rng.uniform(0, 2 * np.pi)), float(rng.uniform(14, 34)), float(rng.uniform(14, 26)))
+            for _ in range(int(rng.integers(1, 4)))]
+
+
+def nearest_airfield(x, y):
+    return min(AIRFIELDS, key=lambda a: (a[0] - x) ** 2 + (a[1] - y) ** 2)
