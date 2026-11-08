@@ -179,7 +179,7 @@ def parse_args():
     ap.add_argument('--sampler-v2', action='store_true', help='modality-aware sampling with idle floor and mode balancing')
     ap.add_argument('--mode-mix', type=json.loads, default=None, help='JSON object of mode sampling masses; default: frame shares')
     ap.add_argument('--extra-data', default='')
-    ap.add_argument('--extra-shards', type=int, default=40, help='shard cap (1..40); final shard is always reserved for evaluation')
+    ap.add_argument('--extra-shards', type=int, default=40, help='global shard cap (1..400), at most 40 per rank; final shard is always reserved for evaluation')
     ap.add_argument('--extra-frac', type=float, default=0.15, help='extra-source batch fraction; future cats target: 0.15..0.20')
     ap.add_argument('--holdout-episodes', type=int, default=0, help='reserve final N episodes of each shard for evaluation')
     return ap.parse_args()
@@ -207,10 +207,12 @@ def load_data(a, rank, world):
     if rank == 0:
         print(f'loaded {len(win.d["action"])} steps/rank from {len(paths)} shards in {time.time() - t0:.0f}s', flush=True)
     if a.extra_data:
-        if not 0 <= a.extra_frac <= 1 or not 1 <= a.extra_shards <= 40:
-            raise ValueError('extra fraction must be in [0,1] and shard cap in [1,40]')
+        if not 0 <= a.extra_frac <= 1 or not 1 <= a.extra_shards <= 400:
+            raise ValueError('extra fraction must be in [0,1] and global shard cap in [1,400]')
         extra = sorted(glob.glob(os.path.join(a.extra_data, '*.npz')))[:-1][:a.extra_shards]
         extra = partition_shards(extra, rank, world)
+        if len(extra) > 40:
+            raise ValueError(f'rank {rank} would load {len(extra)} extra shards; per-rank memory bound is 40')
         win = MixedWindows(win, windows(extra, 5678 + rank), a.extra_frac)
     return win
 

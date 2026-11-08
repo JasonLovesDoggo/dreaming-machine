@@ -107,6 +107,31 @@ class TrainingMetricsTest(unittest.TestCase):
         self.assertEqual(d['train']['series']['loss'][-2], 1)
         self.assertEqual(d['eval']['points']['mixed']['series']['rollout30_acc_final'], [0.7, 0.6])
 
+    def test_audit_ab_wrapped_eval_rows_use_modes_as_apps(self):
+        mode = dict(shard='shard_doom_2000_00002.npz', grid_ce=0.0069, acc_all=0.999, acc_changed=0.628, changed_tiles=414,
+                    copy_last_acc_all=0.9997, doom_aux_teacher=dict(d_type=dict(acc=0.9)),
+                    rollouts={'30': dict(acc_per_step=[0.99, 0.98], copy_first_acc_per_step=[0.99, 0.97])})
+        metrics = dict(modes=dict(mixed=mode, doom=dict(mode, acc_changed=0.5)),
+                       idle=dict(as_is={'1': 0.0, '10': 1.0}, fixed_decode={'1': 0.0, '10': 0.0}),
+                       eval_decode_commit='94ede5d6',
+                       eval_protocol=dict(rollout_starts=20, rollout_batch=20, horizons=[30, 120], doom_teacher='raw argmax'))
+        self.write('audit_ab_B', [train_row(5000), dict(kind='eval', it=5000, time=1.0, checkpoint='ckpt.pt', metrics=metrics)])
+        d = self.metrics('audit_ab_B')
+        self.assertEqual(d['eval']['apps'], ['doom', 'mixed'])
+        self.assertEqual(d['eval']['points']['doom']['series']['acc_changed'], [0.5])
+        self.assertEqual(d['eval']['points']['mixed']['series']['rollout30_copy_final'], [0.97])
+        self.assertNotIn('fp_change_rate', d['eval']['points']['mixed']['series'])
+        self.assertEqual(sorted(d['eval']['latest_rollouts']), ['doom', 'mixed'])
+        self.assertIn('as_is: 1=0 10=1', d['notes']['eval idle'][0])
+        self.assertIn('horizons: 30,120', d['notes']['eval eval_protocol'][0])
+        self.assertEqual(d['notes']['eval eval_decode_commit'], ['@5000 94ede5d6'])
+
+    def test_pr18_eval_rows_skip_non_result_metadata(self):
+        self.write('run', [dict(kind='eval', it=10, metrics=dict(eval_row(10)['metrics'], note='x', protocol=dict(a=1)))])
+        d = self.metrics('run')
+        self.assertEqual(d['eval']['apps'], ['doom', 'mixed'])
+        self.assertEqual(sorted(d['notes']), ['eval note', 'eval protocol'])
+
     def test_resume_keeps_last_write_and_eval_order_is_not_a_restart(self):
         self.write('run', [train_row(25), train_row(50), eval_row(25), train_row(25, loss=9.0), train_row(50)])
         d = self.metrics('run')
