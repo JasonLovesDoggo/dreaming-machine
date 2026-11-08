@@ -24,7 +24,7 @@ APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': '
 DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6), 'calculator': (18, 3)}
 APP_TITLES['terminal'] = 'TERMINAL'
 DEFAULT_POS['terminal'] = (12, 5)
-APP_TITLES['dreamer'] = 'DREAMER'
+APP_TITLES['dreamer'] = 'CHAT'
 DEFAULT_POS['dreamer'] = (7, 3)
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
 KEY_CHAR0 = 9  # typed characters: KEY_CHAR0 + index into CHARSET (space = 9)
@@ -39,7 +39,7 @@ DESK_ICONS = [('folder', 'FILES', ('explorer', 'C:')), ('trash', 'TRASH', ('expl
               ('notepad', 'NOTES', ('notepad', None)), ('calc', 'CALC', ('calculator', None))]
 PATHS = ['C:', 'C:/PICS', 'C:/DOCS', 'C:/GAMES', 'TRASH']
 DESK_ICONS.append(('terminal', 'TERM', ('terminal', None)))
-DESK_ICONS.append(('dreamer', 'DREAM', ('dreamer', None)))
+DESK_ICONS.append(('dreamer', 'CHAT', ('dreamer', None)))
 CANVAS_H, CANVAS_W = 20, 32
 DCLICK_STEPS = 8
 TASKBAR_BTN_W = 5
@@ -838,7 +838,7 @@ class MicroOS:
             g[wr + 1:wr + 16, wc + 1:wc + 21] = ATLAS[('doom_view',)]
             put_text(g, wr + 16, wc + 1, self.doom.hud_text().center(40), 'hud')
         elif app == 'dreamer':
-            wc, wr, w, h = self._frame(g, app, 'THE DREAMER', 'body')
+            wc, wr, w, h = self._frame(g, app, 'CHAT', 'body')
             lines = self.chat.lines()
             end = max(0, len(lines) - self.chat.scroll)
             for i, (ctx, line) in enumerate(lines[max(0, end - 14):end]):
