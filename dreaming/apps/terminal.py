@@ -99,12 +99,13 @@ class Terminal:
                 except ValueError as e: self.error(str(e), events)
 
     def neofetch(self, wake, events):
+        from ..os_sim import APPS
         minutes = self.os.t // 60
         memory = 32 + (self.os.t // 4 + len(self.os.z) * 7) % 96
         info = ['DREAMER/DREAMING', '-----', 'OS: DREAMOS 1.0',
                 'KERNEL: TILES 32X24', f'UPTIME: {minutes} MIN', 'SHELL: DREAMSH',
                 'RES: 256X192', 'CPU: 1 NEURAL CORE', 'GPU: IMAGINARY',
-                f'MEM: {memory} / 256 MB', f'APPS: {len(self.os.z)}']
+                f'MEM: {memory} / 256 MB', f'APPS: {len(APPS)}']
         if wake:
             info = ['DREAMER/DREAMING', '-----', 'SHELL: DREAMSH',
                     'HOST: INSIDE THE MODEL', 'RES: 256X192', 'CPU: 1 NEURAL CORE',
