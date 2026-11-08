@@ -205,15 +205,7 @@ const tileIds = {
 };
 
 function bindOverlays() {
-  const opacityControl = document.createElement('label');
-  opacityControl.id = 'ids-opacity-control';
-  opacityControl.append(' opacity ');
-  const opacityInput = document.createElement('input');
-  Object.assign(opacityInput, {id: 'ids-opacity', type: 'range', min: '0', max: '1', step: '0.05', value: '1'});
-  const opacityValue = document.createElement('span');
-  opacityValue.textContent = '1';
-  opacityControl.append(opacityInput, opacityValue);
-  $('show-ids').closest('label').after(opacityControl);
+  const opacityInput = $('ids-opacity'), opacityValue = $('ids-opacity-value');
   opacityInput.oninput = () => {
     tileIds.opacity = Number(opacityInput.value);
     opacityValue.textContent = opacityInput.value;
@@ -255,13 +247,8 @@ function connect() {
   ws.binaryType = 'arraybuffer';
   const pending = [], compressed = typeof DecompressionStream === 'function';
   let clock, messages = Promise.resolve(), lastFrame = null, avgMs = 1000 / targetHz;
-  const targetControl = document.createElement('label');
-  targetControl.style.whiteSpace = 'nowrap';
-  targetControl.title = 'One frame = one simulator step, so higher values also speed up the game.';
-  const targetInput = document.createElement('input');
-  Object.assign(targetInput, {id: 'fps-target', type: 'number', min: '5', max: '30', step: '1', value: String(targetHz)});
-  targetControl.append('target ', targetInput, ' fps');
-  $('fps').after(targetControl);
+  const targetInput = $('fps-target');
+  targetInput.value = String(targetHz);
   targetInput.onchange = () => {
     const value = Number(targetInput.value);
     targetHz = Math.max(5, Math.min(30, targetInput.value !== '' && Number.isFinite(value) ? value : 15));
