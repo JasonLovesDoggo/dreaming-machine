@@ -5,10 +5,12 @@ from pathlib import Path
 import re
 import shlex
 import time
+from datetime import datetime
 
 import modal
 
-from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, config, lock_config, merge_metrics,
+from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, config, config_row, continuation_budget,
+                              continuation_cfg, lock_config, merge_metrics,
                               publish_checkpoints, publish_set, run_with_deadline,
                               torchrun_command, validate_run_id, write_json)
 
@@ -85,6 +87,48 @@ def train_cluster(cfg: dict):
             out.commit()
             mirror_metrics.remote(ready())
     return dict(rank=rank, returncode=rc, timed_out=timed_out, elapsed=time.time() - start)
+
+
+CONTINUED = 'continuation.json'
+
+
+@app.function(image=image, volumes={'/vol': data.read_only(), '/out': out},
+              cpu=1, memory=2048, retries=0, max_containers=1, timeout=10 * 3600)
+def continue_after(after_iter: int, end_iter: int, ckpt_every: int, stop_at: float,
+                   wait_seconds: float = 5400, poll: float = 30, handoff: float = 30):
+    out_dir, started = Path(OUT_DIR), time.time()
+
+    def read(path, default):
+        return json.loads(path.read_text()) if path.exists() else default
+
+    def budget():
+        out.reload()
+        data.reload()
+        if (out_dir / CONTINUED).exists():
+            raise ValueError('controller already continued this run')
+        return continuation_budget(read(out_dir / 'ledger.json', []), snapshot,
+                                   read(out_dir / 'run.json', {'iter': -1})['iter'],
+                                   read(Path(f'/vol/runs/{RUN_ID}/run.json'), {'iter': -1})['iter'],
+                                   after_iter, time.time(), stop_at)
+
+    out.reload()
+    snapshot = read(out_dir / 'ledger.json', [])
+    while budget() is None:
+        if time.time() - started > wait_seconds:
+            raise TimeoutError(f'iteration {after_iter} not completed and published within {wait_seconds}s')
+        time.sleep(poll)
+    time.sleep(handoff)
+    seconds = budget()
+    if seconds is None or not (out_dir / f'ckpt_{after_iter:06d}.pt').exists():
+        raise ValueError('boundary state changed during handoff')
+    now = time.time()
+    cfg = continuation_cfg(RUN_ID, read(out_dir / 'launch.json', None), after_iter, end_iter, ckpt_every, seconds, now)
+    write_json(out_dir / CONTINUED, dict(time=now, after_iter=after_iter, cfg=cfg))
+    with (out_dir / 'metrics.jsonl').open('a') as f:
+        f.write(json.dumps(config_row(cfg)) + '\n')
+    out.commit()
+    print(json.dumps(cfg, indent=2), flush=True)
+    return train_cluster.remote(cfg)
 
 
 def _eval_ckpt(ckpt_name: str):
@@ -165,6 +209,13 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000, ckpt_ever
     print(shlex.join(torchrun_command(cfg, resume=cfg['resume'])))
     if not dry_run:
         print(train_cluster.remote(cfg))
+
+
+@app.local_entrypoint()
+def auto_continue(after_iter: int = 20000, end_iter: int = 65000, ckpt_every: int = 1000,
+                  stop_at: str = '2026-11-08T14:30:00Z', wait_minutes: float = 90.):
+    stop = datetime.fromisoformat(stop_at.replace('Z', '+00:00')).timestamp()
+    print(continue_after.remote(after_iter, end_iter, ckpt_every, stop, wait_minutes * 60))
 
 
 @app.local_entrypoint()
