@@ -179,7 +179,8 @@ function fillCheckpoints() {
   const sel = $('ckpt');
   for (const name of cfg.ckpts) {
     const m = name.match(/ckpt_0*(\d+)\.pt/);
-    sel.add(new Option(m ? 'iter ' + Number(m[1]).toLocaleString() : name, name, false, name === cfg.current));
+    const run = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) + ' · ' : '';
+    sel.add(new Option(m ? run + 'iter ' + Number(m[1]).toLocaleString() : name, name, false, name === cfg.current));
   }
   if (!cfg.ckpts.length) sel.add(new Option('none'));
   $('neural-status').textContent = cfg.current ? 'loaded' : 'no checkpoint';

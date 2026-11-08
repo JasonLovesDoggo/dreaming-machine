@@ -24,6 +24,7 @@ class Session:
         self.real = MicroOS(_seed())
         self.obs = self.real.reset()
         self.neural = CHECKPOINTS.session()
+        self.checkpoint = CHECKPOINTS.current if self.neural else None
         self.sync()
 
     def sync(self):
@@ -39,6 +40,7 @@ class Session:
         elif cmd == 'load' and ckpt in CHECKPOINTS.names():
             try:
                 self.neural = CHECKPOINTS.session(ckpt)
+                self.checkpoint = ckpt
                 self.sync()
             except Exception:
                 log.exception('could not load checkpoint %s', ckpt)
@@ -78,6 +80,6 @@ async def play_socket(sock: WebSocket):
             latency_ms = (time.perf_counter() - started) * 1000
             await sock.send_bytes(encode(screens, bool(msg.get('ids'))))
             if msg.get('telemetry'):
-                await sock.send_json(dict(latency_ms=latency_ms, app=session.real.focus))
+                await sock.send_json(dict(latency_ms=latency_ms, app=session.real.focus, checkpoint=session.checkpoint))
     except WebSocketDisconnect:
         pass
