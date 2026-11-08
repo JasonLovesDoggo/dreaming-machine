@@ -1,6 +1,7 @@
 """Modal entrypoints.
   modal run modal_app.py::gen_data --total-steps 20000000
   modal run modal_app.py::train            # 2 nodes x 8 B300, resumes runs/main, trains one 10k chunk
+  modal run modal_app.py::train --gpus 1 --iters 5000 --chunk 5000 --run first_5k
   modal run modal_app.py::gen_data --mode doom --total-steps 4000000 --seed-offset 2000   # specials
   modal run modal_app.py::fetch   (download latest checkpoint + rollout pngs to ./runs/modal)
   modal run modal_app.py::regen_all --wipe   # delete every shard, regenerate mixed + all specials
@@ -15,7 +16,8 @@ image = (modal.Image.debian_slim(python_version='3.11')
          .pip_install('torch==2.10.0', index_url='https://download.pytorch.org/whl/cu130')
          .run_commands('ln -sf "$(python -c \'import sysconfig; print(sysconfig.get_path("purelib"))\')/nvidia/cu13/lib/libcudart.so.13" /usr/local/lib/libcudart.so && ldconfig')
          .pip_install('numpy', 'pillow')
-         .add_local_python_source('dreaming'))
+         .add_local_python_source('dreaming')
+         .add_local_file('dreaming/apps/dreamer_corpus.json.gz', '/root/dreaming/apps/dreamer_corpus.json.gz'))
 DATA = '/vol/shards'
 RUNS = '/vol/runs'
 
@@ -141,7 +143,8 @@ def fetch(run: str = 'main'):
 
 web_image = (modal.Image.debian_slim(python_version='3.11')
              .pip_install('torch', 'numpy', 'pillow', 'fastapi[standard]')
-             .add_local_python_source('dreaming', ignore=['**/__pycache__/**']))
+             .add_local_python_source('dreaming', ignore=['**/__pycache__/**'])
+             .add_local_file('dreaming/apps/dreamer_corpus.json.gz', '/root/dreaming/apps/dreamer_corpus.json.gz'))
 
 
 @app.function(image=web_image, gpu=['L4', 'A10G', 'L40S', 'A100', 'H100', 'T4'], volumes={'/vol': vol}, scaledown_window=3600, min_containers=1, timeout=24 * 3600)
