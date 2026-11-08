@@ -1049,7 +1049,9 @@ class Driver:
             yield from self._flight_approach(budget)
         while budget[0] > 0 and self.os.focus == 'flight':
             yield from self._flight_maneuver(budget)
-        if self.mode == 'mixed' and 'flight' in self.os.z and self.rng.random() < .8:
+        for _ in range(3):
+            if self.mode != 'mixed' or 'flight' not in self.os.z:
+                break
             yield from self.close('flight')
 
     def _flight_keys(self):
@@ -1200,6 +1202,8 @@ class Driver:
                             'terminal': lambda: self.task_terminal(deep=True)}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
+            if 'flight' in self.os.z and self.counts['flight_frames'] > FLIGHT_SHARE * self.counts['step']:
+                yield from self.close('flight')
             task = self.choose_task()
             yield from getattr(self, 'task_' + task)()
             yield from self.idle(self.rng.randint(0, 8))
