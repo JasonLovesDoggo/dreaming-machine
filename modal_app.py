@@ -14,7 +14,8 @@ image = (modal.Image.debian_slim(python_version='3.11')
          .pip_install('torch==2.10.0', index_url='https://download.pytorch.org/whl/cu130')
          .run_commands('ln -sf "$(python -c \'import sysconfig; print(sysconfig.get_path("purelib"))\')/nvidia/cu13/lib/libcudart.so.13" /usr/local/lib/libcudart.so && ldconfig')
          .pip_install('numpy', 'pillow')
-         .add_local_python_source('dreaming'))
+         .add_local_python_source('dreaming')
+         .add_local_file('dreaming/apps/dreamer_corpus.json.gz', '/root/dreaming/apps/dreamer_corpus.json.gz'))
 DATA = '/vol/shards'
 RUNS = '/vol/runs'
 
@@ -36,12 +37,14 @@ def gen_data(total_steps: int = 20_000_000, containers: int = 20, seed_offset: i
 
 
 def _train(args: str, gpus: int, dist_args=(), commit=True):
-    import subprocess, shlex
+    import subprocess
+    import shlex
     cmd = ['torchrun', f'--nproc_per_node={gpus}', *dist_args, '-m', 'dreaming.train', '--data', DATA] + shlex.split(args)
     print(' '.join(cmd), flush=True)
     smi = subprocess.Popen(['nvidia-smi', '--query-gpu=index,utilization.gpu,memory.used', '--format=csv,noheader', '-l', '15'])
     p = subprocess.Popen(cmd)
-    import threading, time
+    import threading
+    import time
     def committer():
         while commit and p.poll() is None:
             time.sleep(300)
@@ -109,7 +112,8 @@ def fetch(run: str = 'main'):
 
 web_image = (modal.Image.debian_slim(python_version='3.11')
              .pip_install('torch', 'numpy', 'pillow', 'fastapi[standard]')
-             .add_local_python_source('dreaming', ignore=['**/__pycache__/**']))
+             .add_local_python_source('dreaming', ignore=['**/__pycache__/**'])
+             .add_local_file('dreaming/apps/dreamer_corpus.json.gz', '/root/dreaming/apps/dreamer_corpus.json.gz'))
 
 
 @app.function(image=web_image, gpu=['L4', 'A10G', 'L40S', 'A100', 'H100', 'T4'], volumes={'/vol': vol}, scaledown_window=3600, min_containers=1, timeout=24 * 3600)
@@ -119,4 +123,4 @@ def web():
     from dreaming.web import create_app
     from dreaming.web.telemetry import configure_modal
     configure_modal(vol)
-    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', device='cuda')
+    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', ckpt_root=RUNS, ckpt_refresh=vol.reload, device='cuda')
