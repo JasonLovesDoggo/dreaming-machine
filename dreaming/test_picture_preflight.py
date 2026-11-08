@@ -102,21 +102,24 @@ def test_real_loader_and_step(tmp_path, data, model):
     np.savez(pictures / 'picture.npz', **data)
     lock = check_lock(config('preflight-test', extra_shards=400, data=str(primary), extra_data=str(cats), holdout_episodes=0), None)
     args = loader_args(lock)
+    original_args = vars(args).copy()
     assert (args.batch, args.unroll, args.extra_shards, args.max_steps_data) == (32, 6, 400, 20000)
     original = train.load_data
-    small, result = loader_probe(args, str(pictures))
+    small, loader_report = loader_probe(args, str(pictures))
     assert train.load_data is original
-    assert result['counts'] == dict(primary=22, cats=5, pictures=5)
-    assert small['grid'].shape[:2] == (3, 2)
+    assert loader_report['counts'] == dict(primary=22, cats=5, pictures=5)
+    assert all(array.shape[:2] == (3, 7) for array in small.values())
+    assert loader_report['args'] == original_args and loader_report['args'] is not vars(args)
     optimizer = train.build_optimizer(model, args, 'cpu')
     batch = train.to_torch(small, 'cpu')
-    args.unroll = 1
     loss = train.unroll_loss(model, model, batch, args, 0., 0., torch.Generator(), 'cpu', {})
     loss.backward()
     optimizer.step()
     ck = dict(opt=optimizer.state_dict())
     assert optimizer_report(ck['opt'])['step'] == 1
     result = model_step(model, ck, args, small)
+    assert result['unroll'] == 6
+    assert vars(args) == original_args and loader_report['args']['unroll'] == 6
     assert result['changed_parameters'] > 0 and result['finite']
     assert result['optimizer_after']['step'] == 2
     first = next(iter(ck['opt']['state'].values()))

@@ -1,7 +1,7 @@
 """Isolated 3 x 8 B300 launcher. Import and dry-run never hydrate resources."""
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import time
@@ -22,7 +22,7 @@ data = modal.Volume.from_name('dreaming-computer-data')
 out = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 PICTURE_VOLUME = os.environ.get('DREAMING_PICTURE_VOLUME', '')
 SOURCE_RUN_ID = os.environ.get('DREAMING_SOURCE_RUN_ID', '')
-train_volumes = {'/vol': data.read_only(), '/out': out}
+train_volumes: dict[str | PurePosixPath, modal.Volume | modal.CloudBucketMount] = {'/vol': data.read_only(), '/out': out}
 if PICTURE_VOLUME:
     train_volumes['/pic'] = modal.Volume.from_name(PICTURE_VOLUME).read_only()
 if SOURCE_RUN_ID:

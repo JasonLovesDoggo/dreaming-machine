@@ -213,8 +213,8 @@ def loader_probe(args, picture_dirs):
         require(result[key].shape == baseline[key].shape and result[key].dtype == baseline[key].dtype,
                 f'{key}: two/three bank shape/dtype mismatch')
         require(result[key].shape[:2] == (32, 7), f'{key}: expected [32, 7, ...]')
-    small = {key: array[[0, 22, 27], :2].copy() for key, array in result.items()}
-    return small, dict(args=vars(args), counts=counts, arrays={key: dict(shape=list(value.shape), dtype=str(value.dtype))
+    small = {key: array[[0, 22, 27]].copy() for key, array in result.items()}
+    return small, dict(args=vars(args).copy(), counts=counts, arrays={key: dict(shape=list(value.shape), dtype=str(value.dtype))
                                                             for key, value in result.items()})
 
 
@@ -232,14 +232,21 @@ def optimizer_report(state):
 
 
 def model_step(model, checkpoint, args, batch):
-    args.unroll = 1
     optimizer = train.build_optimizer(model, args, 'cpu')
     optimizer.load_state_dict(checkpoint['opt'])
     before = {key: value.detach().clone() for key, value in model.named_parameters()}
     model.train()
     optimizer.zero_grad(set_to_none=True)
-    loss = train.unroll_loss(model, model, train.to_torch(batch, 'cpu'), args, 0., 0.,
+    steps = 0
+
+    def forward(inputs, memory):
+        nonlocal steps
+        steps += 1
+        return model(inputs, memory)
+
+    loss = train.unroll_loss(forward, model, train.to_torch(batch, 'cpu'), args, 0., 0.,
                              torch.Generator().manual_seed(123), 'cpu', {})
+    require(steps == args.unroll, 'incorrect executed unroll steps')
     require(bool(torch.isfinite(loss)), 'nonfinite loss')
     loss.backward()
     gradients = [p.grad for p in model.parameters() if p.grad is not None]
@@ -250,7 +257,7 @@ def model_step(model, checkpoint, args, batch):
     changed = sum(not torch.equal(before[key], value) for key, value in model.named_parameters())
     require(changed > 0 and all(bool(torch.isfinite(p).all()) for p in model.parameters()), 'invalid updated parameters')
     return dict(loss=float(loss.detach()), grad_norm=float(norm), changed_parameters=changed,
-                gradient_tensors=len(gradients), finite=True, samples=3, unroll=1,
+                gradient_tensors=len(gradients), finite=True, samples=3, unroll=steps,
                 path='train.unroll_loss + backward + clip_grad_norm_(1.0) + train.build_optimizer + opt.step',
                 scheduled_sampling=0, corruption=0, optimizer_after=optimizer_report(optimizer.state_dict()))
 
