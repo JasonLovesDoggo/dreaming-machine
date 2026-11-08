@@ -42,14 +42,14 @@
       const pages = data.pages && typeof data.pages === 'object' && !Array.isArray(data.pages)
         ? ranked(data.pages, Infinity).reduce((sum, row) => sum + row.count, 0) : null;
       byId('kpis').replaceChildren(
-        card('Unique visitors', fmtNumber(data.visitors), 'Anonymous browsers · all time'),
+        card('Unique visitors', fmtNumber(data.visitors), 'Distinct anonymous browser IDs · all time'),
         card('Sessions', fmtNumber(data.sessions), 'Reported sessions · all time'),
         card('Total session duration', fmtDuration(data.total_duration), 'Sum of reported durations'),
         card('Avg session duration', fmtDuration(data.avg_duration), 'Total duration / sessions'),
         card('Page views', fmtNumber(pages), 'Reported pageview events'));
       for (const key of ['pages', 'apps', 'actions', 'checkpoints']) renderRanks(key, data[key]);
       byId('performance').replaceChildren();
-      for (const [key, label, unit] of [['fps', 'FPS', 'fps'], ['latency_ms', 'Latency', 'ms']]) {
+      for (const [key, label, unit] of [['fps', 'FPS', 'fps'], ['latency_ms', 'Server step time', 'ms']]) {
         const metric = data[key] || {};
         byId('performance').append(card(label, `${fmtNumber(metric.avg, 1)} ${unit} avg`,
           `${fmtNumber(metric.min, 1)} min · ${fmtNumber(metric.max, 1)} max · ${fmtNumber(metric.count)} samples`));
@@ -57,7 +57,7 @@
       byId('empty').hidden = data.sessions !== 0;
       lastUpdated = new Date();
       byId('updated').textContent = `Last updated ${lastUpdated.toLocaleTimeString()}`;
-      byId('status').textContent = 'Live · aggregate summary';
+      byId('status').textContent = 'Up to date · all-time aggregates';
       byId('status').className = '';
       byId('refresh').disabled = false;
     },

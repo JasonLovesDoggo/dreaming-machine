@@ -23,19 +23,19 @@
 </head>
 <body class="tp analytics">
   <header class="tp-head"><h1>Dreaming Computer <span>/ web analytics</span></h1><span class="hint">Aggregate only · all time</span></header>
-  <p class="intro">A live view of anonymous browser activity since telemetry began. No individual browsing records are shown.</p>
+  <p class="intro">Auto-refreshing all-time aggregates of anonymous browser telemetry since collection began. These are cumulative totals, not a count of people online now. No individual records are shown.</p>
   <div class="toolbar"><span id="auto-status">Auto-refresh · every 15s</span><span class="spacer"></span><span id="updated" class="hint">Not yet updated</span><button id="refresh" class="primary">Refresh now</button></div>
   <p id="status" role="status" aria-live="polite">Loading analytics…</p>
   <p id="empty" class="notice" hidden>No sessions recorded yet. Activity will appear here as clients report telemetry.</p>
   <section aria-label="Overview"><div id="kpis" class="tiles"></div></section>
-  <p class="note">Visitors = distinct anonymous browser IDs. Session duration = max reported duration per session and page, summed across pages; average divides by sessions.</p>
+  <p class="note">Visitors = distinct anonymous browser IDs (localStorage, so one person on two browsers counts twice). Session duration = visible-tab time; the max reported per session and page, summed across pages; average divides by sessions.</p>
   <div class="rankings">
     <section class="rank-panel"><h2>Page views by page</h2><p class="hint">Reported pageview events · top 10</p><div id="pages"></div></section>
-    <section class="rank-panel"><h2>App usage</h2><p class="hint">Counted interactions reported by clients · top 10</p><div id="apps"></div></section>
-    <section class="rank-panel"><h2>Action usage</h2><p class="hint">Counted interactions reported by clients · top 10</p><div id="actions"></div></section>
-    <section class="rank-panel"><h2>Checkpoint usage</h2><p class="hint">Telemetry events, not unique users · top 10</p><div id="checkpoints"></div></section>
+    <section class="rank-panel"><h2>App usage</h2><p class="hint">Simulation steps by focused app (one sample per server step reply), not opens or clicks · top 10</p><div id="apps"></div></section>
+    <section class="rank-panel"><h2>Action usage</h2><p class="hint">Page control clicks/changes by control ID, plus steps sent with mouse button or key down (mouse/key) · top 10</p><div id="actions"></div></section>
+    <section class="rank-panel"><h2>Checkpoint usage</h2><p class="hint">Telemetry events (~15 s heartbeats) tagged with the selected checkpoint, not unique users · top 10</p><div id="checkpoints"></div></section>
   </div>
-  <section><div class="panel-head"><h2>Client performance</h2><span class="hint">Client-reported samples, not server benchmarks</span></div><div id="performance" class="tiles"></div></section>
+  <section><div class="panel-head"><h2>Client performance</h2><span class="hint">Last value per telemetry event. FPS = browser frame rate; step time = server-measured simulation step, excluding network round trip</span></div><div id="performance" class="tiles"></div></section>
   <footer><a href=".">play the computer</a> &middot; <a href="training">training metrics</a> &middot; <a href="data">training data viewer</a> &middot; <a href="sprites">tile &amp; sprite atlas</a></footer>
   <script src="static/analytics_core.js"></script>
   <script src="static/analytics.js"></script>

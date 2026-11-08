@@ -32,6 +32,17 @@ class AnalyticsTest(unittest.TestCase):
         source = (ROOT / 'static' / 'analytics.js').read_text()
         self.assertIn("fetch('telemetry/summary'", source)
 
+    def test_labels_match_telemetry_semantics(self):
+        page = (ROOT / 'static' / 'analytics.html').read_text()
+        script = (ROOT / 'static' / 'analytics.js').read_text()
+        self.assertNotIn('interactions', page)
+        self.assertIn('focused app', page)
+        self.assertIn('excluding network round trip', page)
+        self.assertIn('not a count of people online now', page)
+        self.assertIn('Server step time', script)
+        self.assertNotIn("'Latency'", script)
+        self.assertNotIn('Live ·', script)
+
     @unittest.skipIf(shutil.which('node') is None, 'node not installed')
     def test_core_helpers(self):
         out = subprocess.run(['node', str(ROOT / 'test_analytics_core.js')],
