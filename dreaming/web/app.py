@@ -9,6 +9,7 @@ from ..os_sim import EXTRA_KEYS, KEY_EXTRA0
 from . import atlas, data_viewer, flight, play, telemetry, training
 from .neural import CHECKPOINTS
 from .settings import SETTINGS
+from .storage import volume_lock, volume_read
 
 STATIC = os.path.join(os.path.dirname(__file__), 'static')
 log = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, ckpt_
     if ckpt_dir:
         CHECKPOINTS.configure(ckpt_dir, device, ckpt_name, run_root=ckpt_root)
     if runs_dir or metrics_refresh:
-        training.configure(runs_dir, metrics_refresh)
+        training.configure(runs_dir, metrics_refresh, guard=volume_lock)
 
     app = FastAPI(title='Dreaming Computer')
     app.add_middleware(GZipMiddleware, minimum_size=4096)
@@ -38,6 +39,7 @@ def create_app(data_dir=None, ckpt_dir=None, device='cpu', ckpt_name=None, ckpt_
     app.add_api_route('/training', _page('training.html'), include_in_schema=False)
 
     @app.get('/config')
+    @volume_read
     def config():
         if ckpt_refresh:
             try:

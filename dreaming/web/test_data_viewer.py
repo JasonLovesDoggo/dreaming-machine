@@ -4,8 +4,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from ..dataset import run_episode
 from . import data_viewer as viewer
+from . import telemetry
 
 
 class DataViewerTest(unittest.TestCase):
@@ -56,6 +58,49 @@ class DataViewerTest(unittest.TestCase):
             self.assertEqual(len(response.content), frames * 256 * 192)
             self.assertEqual(len(json.loads(response.headers['x-meta'])), frames)
 
+    def test_dataset_and_shard_reads_wait_for_reload(self):
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        responses = []
+        volume = Mock()
+
+        def reload():
+            os.rename(self.root, self.root + '.hidden')
+            entered.set()
+            try:
+                if not release.wait(5):
+                    raise TimeoutError('reload was not released')
+            finally:
+                os.rename(self.root + '.hidden', self.root)
+
+        def read():
+            for path in ('/data/datasets', '/data/index', '/data/shard?name=same',
+                         '/data/clip?shard=same&start=0'):
+                responses.append(self.client.get(path))
+            finished.set()
+
+        volume.reload.side_effect = reload
+        with patch.multiple(telemetry, _volume=volume, _dirty=False):
+            refresh = threading.Thread(target=telemetry.refresh_modal)
+            reader = threading.Thread(target=read)
+            refresh.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                reader.start()
+                self.assertFalse(finished.wait(.05))
+                self.assertFalse(responses)
+            finally:
+                release.set()
+                refresh.join(2)
+                if reader.ident is not None:
+                    reader.join(2)
+            self.assertFalse(refresh.is_alive())
+            self.assertFalse(reader.is_alive())
+        self.assertEqual([r.status_code for r in responses], [200] * 4)
+        self.assertTrue(responses[0].json()[0]['available'])
+        self.assertEqual(responses[0].json()[0]['shards'], 1)
+        self.assertEqual(responses[1].json()['shards'], ['same'])
+        self.assertTrue(responses[1].json()['available'])
+
     def test_datasets_missing_and_all_roots(self):
         datasets = self.client.get('/data/datasets').json()
         self.assertEqual([d['id'] for d in datasets], ['main', 'cats_dense_v1', 'llm'])
@@ -93,6 +138,7 @@ class ViewerJavascriptTest(unittest.TestCase):
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const elements = new Map();
 let renders = 0, mode = 'ok';
+const calls = [];
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
     value: '0', selectedIndex: 0, options: [], textContent: '', hidden: false,
@@ -107,11 +153,12 @@ const context = vm.createContext({console, Uint8Array, AbortController, URLSearc
   document: {getElementById: element}, setInterval() {},
   Option: function(text, value = text) { this.text = text; this.value = value; },
   fetch: async url => {
+    calls.push(url.split('?')[0]);
     if (mode === 'network') throw new Error('offline');
     if (mode === 'http') return {ok: false, status: 503, text: async () => 'unavailable'};
     return {ok: true, headers: {get: () => mode === 'meta' ? 'bad json' : JSON.stringify([['desktop', [0,0,0,0]]])},
       arrayBuffer: async () => new Uint8Array(mode === 'short' ? 1 : 256*192).buffer,
-      json: async () => url.startsWith('data/datasets') ? [{id:'main',dir:'shards',shards:1,available:true}] :
+      json: async () => url.startsWith('data/datasets') ? [{id:'main',dir:'shards',shards:1,available:mode !== 'missing'}] :
         url.startsWith('config') ? {pal:[[0,0,0]]} :
         url.startsWith('data/index') ? {shards: mode === 'empty' ? [] : ['same'], dir:'shards'} :
         {ep_len:[1],frames:1}};
@@ -119,10 +166,18 @@ const context = vm.createContext({console, Uint8Array, AbortController, URLSearc
 });
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const run = s => vm.runInContext(s, context);
-const settle = async () => { for(let i=0;i<30;i++) await Promise.resolve(); };
+const settle = async () => { await new Promise(setImmediate); };
 (async () => {
   await settle();
   assert.equal(renders, 1);
+  assert.deepEqual(calls.slice(0, 2), ['config', 'data/datasets']);
+  mode = 'missing';
+  await run('init()');
+  assert.match(element('status').textContent, /No datasets available/);
+  assert.equal(element('retry').hidden, false);
+  mode = 'ok';
+  await element('retry').onclick();
+  assert.equal(element('status').textContent, '');
   const messages = [];
   Object.defineProperty(element('status'), 'textContent', {
     get() { return messages.at(-1) || ''; },

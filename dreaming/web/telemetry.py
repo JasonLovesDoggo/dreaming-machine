@@ -9,12 +9,13 @@ import threading
 import time
 from collections import Counter
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from .storage import volume_lock
 
 router = APIRouter(prefix='/telemetry')
 log = logging.getLogger(__name__)
-_lock = threading.Lock()
+_lock = volume_lock
 _started = False
 _dirty = False
 _salt = None
@@ -25,6 +26,16 @@ _writer = secrets.token_hex(8)
 def configure_modal(volume):
     global _volume
     _volume = volume
+    return refresh_modal
+
+
+def refresh_modal():
+    global _dirty
+    with _lock:
+        if _dirty:
+            _volume.commit()
+            _dirty = False
+        _volume.reload()
 
 
 class Event(BaseModel):
@@ -83,40 +94,58 @@ def write(event, client=None, user_agent=''):
             if not _started and _volume is not None:
                 _started = True
                 threading.Thread(target=_committer, daemon=True).start()
+        return True
     except Exception:
         log.exception('telemetry write failed')
+        return False
 
 
 @router.post('/events', status_code=202)
 def ingest(event: Event, request: Request):
-    write(event, request.client, request.headers.get('user-agent', ''))
+    if not write(event, request.client, request.headers.get('user-agent', '')):
+        raise HTTPException(status_code=503, detail='Telemetry storage unavailable')
     return {'ok': True}
 
 
-@router.get('/summary')
-def summary():
+def _rows():
+    with _lock:
+        paths = list(directory().glob('*.jsonl'))
+    for path in paths:
+        offset = 0
+        while True:
+            with _lock:
+                with path.open('rb') as f:
+                    f.seek(offset)
+                    chunk = f.read(1 << 20)
+                    if chunk and not chunk.endswith(b'\n'):
+                        chunk += f.readline(64 << 10)
+                    offset = f.tell()
+            if not chunk:
+                break
+            for line in chunk.splitlines():
+                try:
+                    yield json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+
+
+def _summary():
     visitors, sessions, pages = set(), {}, Counter()
     apps, actions, checkpoints = Counter(), Counter(), Counter()
     metrics = {'fps': [], 'latency_ms': []}
-    for path in directory().glob('*.jsonl'):
-        with path.open() as f:
-            for line in f:
-                try:
-                    row = json.loads(line)
-                except (ValueError, UnicodeError):
-                    continue
-                visitors.add(row['visitor'])
-                key = (row['visitor'], row['session'], row['page'])
-                sessions[key] = max(sessions.get(key, 0), row['duration'])
-                if row['kind'] == 'pageview':
-                    pages[row['page']] += 1
-                apps.update(row['apps'])
-                actions.update(row['actions'])
-                if row['checkpoint']:
-                    checkpoints[row['checkpoint']] += 1
-                for name, values in metrics.items():
-                    if row.get(name) is not None:
-                        values.append(row[name])
+    for row in _rows():
+        visitors.add(row['visitor'])
+        key = (row['visitor'], row['session'], row['page'])
+        sessions[key] = max(sessions.get(key, 0), row['duration'])
+        if row['kind'] == 'pageview':
+            pages[row['page']] += 1
+        apps.update(row['apps'])
+        actions.update(row['actions'])
+        if row['checkpoint']:
+            checkpoints[row['checkpoint']] += 1
+        for name, values in metrics.items():
+            if row.get(name) is not None:
+                values.append(row[name])
     count = len({(v, s) for v, s, p in sessions})
     total = sum(sessions.values())
     return dict(visitors=len(visitors), sessions=count, total_duration=total,
@@ -124,3 +153,8 @@ def summary():
                 apps=dict(apps.most_common()), actions=dict(actions.most_common()), checkpoints=checkpoints,
                 **{k: dict(count=len(v), avg=sum(v) / len(v) if v else None,
                            min=min(v) if v else None, max=max(v) if v else None) for k, v in metrics.items()})
+
+
+@router.get('/summary')
+def summary():
+    return _summary()

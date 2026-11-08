@@ -317,11 +317,11 @@ class Refresher:
 
 
 class Store:
-    def __init__(self, root=None, refresh=None, refresh_ttl=REFRESH_TTL):
+    def __init__(self, root=None, refresh=None, refresh_ttl=REFRESH_TTL, guard=None):
         self.root = root or os.environ.get('DREAMING_RUNS_DIR', './runs')
         # Shared with the refresher: Modal refuses reload while a volume file is open and shows an empty
         # mount mid-reload, so scans/reads and reloads must never overlap.
-        self.lock = threading.RLock()
+        self.lock = guard or threading.RLock()
         self.refresher = Refresher(refresh, refresh_ttl, guard=self.lock)
         self.refresher.on_done = self.invalidate
         self.scanned_at, self.scan, self.root_exists = 0.0, {}, False
@@ -420,9 +420,9 @@ class Store:
 STORE = Store()
 
 
-def configure(runs_dir=None, refresh=None, refresh_ttl=REFRESH_TTL):
+def configure(runs_dir=None, refresh=None, refresh_ttl=REFRESH_TTL, guard=None):
     global STORE
-    STORE = Store(runs_dir, refresh, refresh_ttl)
+    STORE = Store(runs_dir, refresh, refresh_ttl, guard=guard)
 
 
 @router.get('/runs')
