@@ -29,8 +29,8 @@ async function request(path, params = {}) {
   return response;
 }
 
-async function attempt(work, retry, token = generation) {
-  status('loading…');
+async function attempt(work, retry, token = generation, loading = true) {
+  if (loading) status('loading…');
   try { await work(); } catch (error) {
     if (token === generation && error.name !== 'AbortError') {
       playing = false;
@@ -88,7 +88,8 @@ async function show() {
     const [focus, [x, y, btn, key]] = clip.meta[i - clip.start];
     $('info').textContent = `${dataset} / ${shardName}: ${frames} frames, ${epLen.length} episodes | step ${step}/${episodeLen - 1} focus=${focus} mouse=(${x},${y}) btn=${btn} key=${KEY_NAMES[key] ?? key}`;
     status('');
-  }, show, token);
+    if (i + CHUNK < episodeStart + episodeLen) getClip(i + CHUNK, token).catch(() => {});
+  }, show, token, !clips.has(`${dataset}:${shardName}:${i - i % CHUNK}`));
 }
 
 async function pickEpisode(random = false) {

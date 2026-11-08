@@ -123,6 +123,13 @@ const settle = async () => { for(let i=0;i<30;i++) await Promise.resolve(); };
 (async () => {
   await settle();
   assert.equal(renders, 1);
+  const messages = [];
+  Object.defineProperty(element('status'), 'textContent', {
+    get() { return messages.at(-1) || ''; },
+    set(value) { messages.push(value); },
+  });
+  await run('show()');
+  assert.equal(messages.includes('loading…'), false);
   for (const failure of ['http', 'network', 'meta', 'short']) {
     mode = failure;
     await run('clips.clear(); show()');
@@ -148,6 +155,18 @@ const settle = async () => { for(let i=0;i<30;i++) await Promise.resolve(); };
   await stale;
   assert.equal(renders, before);
   assert.equal(run('clips.size'), 0);
+  const requests = [];
+  context.fetch = async url => {
+    requests.push(url);
+    const start = Number(new URLSearchParams(url.split('?')[1]).get('start'));
+    const count = Math.min(32, 33 - start);
+    return {ok:true, headers:{get:()=>JSON.stringify(Array.from({length:count}, () => ['desktop',[0,0,0,0]]))},
+      arrayBuffer:async()=>new Uint8Array(count*256*192).buffer};
+  };
+  await run('frames = 33; episodeLen = 33; clips.clear(); show()');
+  await settle();
+  assert.deepEqual(requests.map(url => new URLSearchParams(url.split('?')[1]).get('start')), ['0', '32']);
+  assert.equal(run('clips.has("main:same:32")'), true);
 })().catch(e => { console.error(e); process.exitCode = 1; });
 """
         result = subprocess.run(['node', '-e', script, str(Path(__file__).with_name('static') / 'data.js')],
