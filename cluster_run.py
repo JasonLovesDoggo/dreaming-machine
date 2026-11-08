@@ -55,7 +55,10 @@ def train_cluster(cfg: dict):
     spawned: set[str] = set()
 
     def ready():
-        return sorted(name for name in publish_names if (Path(OUT_DIR) / name).exists())
+        marker = Path(OUT_DIR) / 'run.json'
+        completed = json.loads(marker.read_text())['iter'] if marker.exists() else -1
+        return sorted(name for name in publish_names
+                      if int(name[5:-3]) <= completed and (Path(OUT_DIR) / name).exists())
 
     if rank == 0:
         lock_config(OUT_DIR, cfg)
@@ -84,9 +87,7 @@ def train_cluster(cfg: dict):
     return dict(rank=rank, returncode=rc, timed_out=timed_out, elapsed=time.time() - start)
 
 
-@app.function(image=image, volumes={'/vol': data.read_only(), '/out': out},
-              gpu=os.environ.get('DREAMING_EVAL_GPU', 'B300'), cpu=8, memory=65536, timeout=3600)
-def eval_ckpt(ckpt_name: str):
+def _eval_ckpt(ckpt_name: str):
     import subprocess
     if Path(ckpt_name).name != ckpt_name or not ckpt_name.endswith('.pt'):
         raise ValueError('checkpoint must be a .pt basename')
@@ -96,6 +97,18 @@ def eval_ckpt(ckpt_name: str):
                     f'{OUT_DIR}/eval/{ckpt_name}.json', '--metrics-dir', f'{OUT_DIR}/eval'], check=True)
     out.commit()
     mirror_metrics.remote()
+
+
+@app.function(image=image, volumes={'/vol': data.read_only(), '/out': out},
+              cpu=8, memory=65536, timeout=3600)
+def eval_ckpt(ckpt_name: str):
+    _eval_ckpt(ckpt_name)
+
+
+@app.function(image=image, volumes={'/vol': data.read_only(), '/out': out},
+              gpu=os.environ.get('DREAMING_EVAL_GPU', 'B300'), cpu=8, memory=65536, timeout=3600)
+def eval_ckpt_gpu(ckpt_name: str):
+    _eval_ckpt(ckpt_name)
 
 
 def read_state():
@@ -140,8 +153,8 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
 
 
 @app.local_entrypoint()
-def eval(ckpt_name: str = 'ckpt.pt'):
-    eval_ckpt.remote(ckpt_name)
+def eval(ckpt_name: str = 'ckpt.pt', gpu: bool = False):
+    (eval_ckpt_gpu if gpu else eval_ckpt).remote(ckpt_name)
 
 
 @app.local_entrypoint()
