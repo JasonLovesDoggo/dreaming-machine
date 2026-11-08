@@ -1,16 +1,19 @@
 """Generate training shards: python -m dreaming.dataset --out data --steps 2000000 --workers 8"""
 import argparse
+import json
 import os
 import time
+from collections import Counter
 from multiprocessing import Pool
 import numpy as np
 from .os_sim import MicroOS
 from .driver import Driver
+from .pictures import parse_name
 
 OBS_KEYS = ['grid', 'cursor', 'doom_cols', 'doom_spr', 'doom_meta', 'state']
 
 
-def run_episode(seed, length, mode='mixed'):
+def run_episode(seed, length, mode='mixed', stats=None):
     o = MicroOS(seed)
     obs = o.reset()
     d = Driver(o, seed, mode)
@@ -20,6 +23,11 @@ def run_episode(seed, length, mode='mixed'):
         a = next(d.stream)
         obs = o.step(a)
         d.observe_events(obs['events'])
+        if stats is not None:
+            stats['focus'][o.focus or 'desktop'] += 1
+            if 'ex_open_png' in obs['events']:
+                stats['picture_opens'][o.pt_file] += 1
+                stats['subjects'].update(set(parse_name(o.pt_file)) or {'abstract'})
         acts.append(a)
         for k in OBS_KEYS:
             rec[k].append(obs[k])
@@ -31,12 +39,17 @@ def run_episode(seed, length, mode='mixed'):
 
 def make_shard(args):
     path, shard_idx, n_eps, ep_len, base_seed, mode = args
-    eps = [run_episode(base_seed * 10_000_000 + shard_idx * 1000 + e, ep_len, mode) for e in range(n_eps)]
+    stats = {k: Counter() for k in ('picture_opens', 'subjects', 'focus')}
+    seeds = [base_seed * 10_000_000 + shard_idx * 1000 + e for e in range(n_eps)]
+    eps = [run_episode(seed, ep_len, mode, stats) for seed in seeds]
     data = {k: np.concatenate([e[k] for e in eps]) for k in eps[0]}
     data['ep_len'] = np.array([len(e['action']) for e in eps], np.int64)
     tmp = path + '.tmp.npz'
     np.savez_compressed(tmp, **data)
     os.replace(tmp, path)
+    with open(path + '.json.tmp', 'w') as f:
+        json.dump(dict(mode=mode, seeds=seeds, actions=n_eps * ep_len, **stats), f, sort_keys=True)
+    os.replace(path + '.json.tmp', path + '.json')
     return path
 
 
