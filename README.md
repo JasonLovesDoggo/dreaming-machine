@@ -2,7 +2,7 @@
 
 What if a neural network could become a computer?
 
-![Doom running on the real computer (left) and dreamed by the neural network (right)](docs/images/doom.png)
+[![Watch the Dreaming Computer demo on YouTube](https://img.youtube.com/vi/tbqHumF-ZgY/sddefault.jpg)](https://youtu.be/tbqHumF-ZgY)
 
 Before you open an app on your phone, you can already picture it: where the buttons are, what happens when you tap one, what the next screen will be. Nothing is compiled in your head. You learned it by watching and using it. This project tries to teach a model the same thing.
 
