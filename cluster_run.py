@@ -138,7 +138,7 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
            min_lr_frac: float = 0.1, restart_iter: int = 5000, batch: int = 32,
            unroll: int = 6, data_path: str = '/vol/shards',
            extra_data: str = '/vol/shards_cats_dense_v1', extra_frac: float = 0.15,
-           extra_shards: int = 40, holdout_episodes: int = 2,
+           extra_shards: int = 40, holdout_episodes: int = 2, sampler_v2: bool = False,
            source: str = '/vol/runs/atlas_v2_first_5k/ckpt_005000.pt', total_cap_hours: float = 8.):
     lock, records, resumed, marker = read_state()
     if resumed and marker is None:
@@ -149,7 +149,8 @@ def launch(phase: str = 'long', steps: int = 0, end_iter: int = 10000,
                  budget_hours=budget_hours, min_lr_frac=min_lr_frac, restart_iter=restart_iter,
                  batch=batch, unroll=unroll, data=data_path, extra_data=extra_data,
                  extra_frac=extra_frac, extra_shards=extra_shards,
-                 holdout_episodes=holdout_episodes, source=source, total_cap_hours=total_cap_hours)
+                 holdout_episodes=holdout_episodes, sampler_v2=sampler_v2,
+                 source=source, total_cap_hours=total_cap_hours)
     check_lock(cfg, lock)
     check_budget(records, budget_hours * 3600, total_cap_hours * 3600)
     cfg['deadline'] = time.time() + budget_hours * 3600

@@ -40,7 +40,9 @@ Only phase `long` is supported. `--steps` overrides the default absolute
 5000**, at or before `--iters`. Every checkpoint is at absolute iteration 10000,
 15000, 20000, etc.; there are no pilot/gate chunks or extra calibration saves.
 `train.py` also saves at the chunk end, so alignment is mandatory. Automatic
-resume uses `/out/runs/<id>/ckpt.pt` and its run.json iteration; a fresh run uses
+resume uses the numbered `/out/runs/<id>/ckpt_NNNNNN.pt` matching run.json,
+never the potentially partial rolling ckpt.pt. A missing numbered file fails
+instead of falling back. A fresh run uses
 `/vol/runs/atlas_v2_first_5k/ckpt_005000.pt`. The source is never written.
 
 ## Schedule and calibration
@@ -52,7 +54,9 @@ unscaled**, with warmup restarted at iteration 5000 for 200 updates; cosine hori
 `--unroll`, `--data-path`, `--extra-data`, `--extra-frac`, `--extra-shards`,
 `--holdout-episodes`, and `--source` are exposed and locked by launch.json.
 Default primary data is `/vol/shards`, cats extra `/vol/shards_cats_dense_v1`,
-extra fraction .15, extra shard cap 40, holdout 2, sync-fix and sampler-v2 enabled.
+extra fraction .15, extra shard cap 40, holdout 2, sync-fix and compile enabled.
+Sampler-v2 is disabled by default; opt in with `--sampler-v2`. This choice is
+included in launch.json and cannot change on continuation launches.
 
 Rank 0 inspects metrics at each 300-second tick. Once at least 300 updates have
 been logged, it prints one calibration line with samples/s, updates/s, loss,
@@ -97,6 +101,8 @@ The web metrics parser accepts nested eval rows following train rows.
 Eval writes separate `eval/metrics.jsonl`; run it after training exits to avoid
 concurrent output-volume writers. Eval defaults to CPU; `--gpu` explicitly opts
 into one GPU, with `DREAMING_EVAL_GPU` changing its B300 type default.
+Eval requires an explicit numbered checkpoint at or before the output run.json
+iteration. The CPU mirror has 2048 MiB RAM and an 1800-second timeout for large copies.
 
 Before launch check quota for all three nodes, source existence, data/holdout
 settings, output identity, no concurrent writer, remaining budget and estimated
