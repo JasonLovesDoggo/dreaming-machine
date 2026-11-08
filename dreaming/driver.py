@@ -5,7 +5,7 @@ from collections import Counter
 from .os_sim import (APP_SIZES, APPS, DESK_ICONS, icon_pos, CANVAS_W, CANVAS_H, TASKBAR_BTN_W, DCLICK_STEPS, KEY_UP, KEY_DOWN,
                      KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL, NKEYS, KEY_CHAR0)
 from .tiles import CHAR_IDX, CHARSET
-from .pictures import IMAGE_EXTS, CATEGORY_WORDS, CAT_WORDS
+from .pictures import IMAGE_EXTS, CATEGORY_WORDS, CAT_WORDS, parse_name
 from .tiles import T, GW, GH, SCREEN_W, SCREEN_H
 from . import doom as dm
 from .apps.dreamer import prompts
@@ -26,7 +26,11 @@ TASK_EVENTS = {
     'dreamer': ['dreamer_send', 'dreamer_reply', 'dreamer_type', 'dreamer_backspace'],
 }
 SUBJECT_KEYS = sorted(k for k in CATEGORY_WORDS if k != 'cat')
-CAT_BASE_WORDS = ['CAT', 'CAT', 'KITTY', 'KITTEN', 'CATS']
+CAT_BASE_WORDS = ['CAT', 'CAT', 'CAT', 'CAT', 'KITTY', 'KITTY', 'KITTEN', 'KITTEN', 'CATS', 'TOMCAT', 'KITTIES', 'FELINE']
+CAT_COLORS = ['ORANGE', 'ORANGE', 'RED', 'BLACK', 'BLACK', 'WHITE', 'WHITE', 'GINGER', 'GINGER', 'GRAY', 'GREY', 'BROWN',
+              'BLUE', 'PINK', 'CREAM', 'GOLDEN', 'SILVER', 'YELLOW', 'GREEN', 'CHOCOLATE']
+CAT_EXTRAS = ['FLUFFY', 'SLEEPY', 'STRIPED', 'SPOTTED', 'BIG', 'TINY', 'BABY', 'CHONKY', 'LITTLE', 'FAT', 'SITTING']
+CAT_SHARE = {'mixed': 0.74, 'cats': 0.97}
 UNKNOWN_WORDS = "IMG PHOTO TRIP MEME ART PIC SCAN WALLPAPER DOODLE BEST OLD THING STUFF".split()
 WORDS = ("HELLO WORLD THE A DREAM MACHINE IS RUNNING DOOM CAT DOG PAINT TODO SHIP IT NOW GPU MODEL TRAIN PLAY CARDS "
          "FILE SAVE NEW OK YES NO 123 2026 WIN NOTE MEETING AT 5:00 BUY MILK EGGS CALL MOM FIX BUG DEPLOY FRIDAY "
@@ -763,25 +767,72 @@ class Driver:
             yield from self.close('calculator')
 
     def image_word(self):
-        """A subject keyword: ~30% cats (mostly plain CAT/KITTY so the concept dominates), else uniform over subjects."""
+        """A non-cat subject keyword, uniform over subjects (so a subject with many aliases isn't favoured)."""
+        return self.rng.choice(CATEGORY_WORDS[self.rng.choice(SUBJECT_KEYS)])
+
+    def cat_words(self):
+        """A cat phrase: mostly CAT/KITTY/KITTEN, often with colour adjectives (ORANGE CAT, BLACK AND WHITE KITTEN)."""
         r = self.rng
-        if r.random() < 0.3:
-            return r.choice(CAT_BASE_WORDS) if r.random() < 0.55 else r.choice(CAT_WORDS)
-        return r.choice(CATEGORY_WORDS[r.choice(SUBJECT_KEYS)])
+        noun = r.choice(CAT_BASE_WORDS) if r.random() < 0.8 else r.choice(CAT_WORDS)
+        adj = []
+        if r.random() < 0.6:
+            adj.append(r.choice(CAT_COLORS))
+            if r.random() < 0.15:
+                second = r.choice([c for c in CAT_COLORS if c != adj[0]])
+                adj += ['AND', second] if r.random() < 0.5 else [second]
+        if r.random() < 0.15:
+            adj.insert(0, r.choice(CAT_EXTRAS))
+        return adj + [noun]
 
     def make_name(self):
         r = self.rng
-        if r.random() < 0.08:
+        cat_share = CAT_SHARE.get(self.mode, CAT_SHARE['mixed'])
+        if self.mode != 'cats' and r.random() < 0.08:
             words = [r.choice(UNKNOWN_WORDS)]
+        elif r.random() < cat_share:
+            words = self.cat_words()
+            if self.mode != 'cats' and r.random() < 0.08:
+                words.append(self.image_word())
         else:
             words = [self.image_word() for _ in range(1 if r.random() < 0.75 else 2)]
-        name = (' ' if r.random() < 0.4 else '').join(words)
         if r.random() < 0.2:
-            name = r.choice(['MY ', 'BIG ', 'TINY ', 'OLD ']) + name
-        if r.random() < 0.3:
-            name += str(r.randint(1, 99))
-        ext = r.choice(IMAGE_EXTS) if r.random() < 0.88 else '.TXT'
-        return name[:20 - len(ext)] + ext
+            words.insert(0, r.choice(['MY', 'BIG', 'TINY', 'OLD']))
+        suffix = str(r.randint(1, 99)) if r.random() < 0.3 else ''
+        ext = r.choice(IMAGE_EXTS) if r.random() < (0.97 if self.mode == 'cats' else 0.88) else '.TXT'
+        sep = r.choice([' ', ' ', '', '_', '-']) if r.random() < 0.6 else ' '
+        while len(words) > 1 and len(sep.join(words) + suffix + ext) > 20:
+            words.pop(0)  # drop leading modifiers first, so the subject word survives
+        return (sep.join(words) + suffix)[:20 - len(ext)] + ext
+
+    def task_cats(self):
+        """Cat-focused session: make and open several cat pictures in a row, sometimes reopening old ones."""
+        r = self.rng
+        for _ in range(r.randint(2, 4)):
+            if r.random() < 0.25 and self.os.fs.get('C:/PICS'):
+                yield from self.reopen_cat()
+            else:
+                yield from self.task_images()
+            if 'paint' in self.os.z and r.random() < 0.7:
+                yield from self.close('paint')
+            yield from self.idle(r.randint(0, 4))
+
+    def reopen_cat(self):
+        r = self.rng
+        yield from self.open_app('explorer', 'C:/PICS')
+        if 'explorer' not in self.os.z or self.os.ex_path != 'C:/PICS':
+            return
+        items = self.os.fs['C:/PICS']
+        cand = [i for i, (n, k) in enumerate(items) if k == 'png' and 'cat' in parse_name(n)]
+        if not cand:
+            return
+        yield from self.ensure_focus('explorer')
+        wc, wr, w, h = self.win('explorer')
+        i = r.choice(cand)
+        yield from self.click((wc + 2) * T + r.randint(2, 50), (wr + 2 + i) * T + r.randint(1, 6), double=True)
+        if self.os.focus == 'paint':
+            while 'paint' in self.os.z and self.os.pt_load < 10:
+                yield from self.idle(1)
+            yield from self.idle(r.randint(3, 20))
 
     def task_images(self):
         r = self.rng
@@ -1199,7 +1250,7 @@ class Driver:
                 yield from {'doom': lambda: self.task_doom(deep=True), 'cards': lambda: self.task_cards(full=True),
                             'windows': self.task_windows_deep, 'dreamer': self.task_dreamer, 'flight': self.task_flight,
                             'calculator': lambda: self.task_calculator(deep=True),
-                            'terminal': lambda: self.task_terminal(deep=True)}[self.mode]()
+                            'terminal': lambda: self.task_terminal(deep=True), 'cats': self.task_cats}[self.mode]()
                 yield from self.idle(self.rng.randint(0, 8))
                 continue
             if 'flight' in self.os.z and self.counts['flight_frames'] > FLIGHT_SHARE * self.counts['step']:
