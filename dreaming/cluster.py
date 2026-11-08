@@ -176,15 +176,23 @@ def validate_publish_dir(path):
 def publish_checkpoints(src, dst, names):
     src, dst = Path(src), Path(dst)
     validate_publish_dir(dst)
+    marker = src / 'run.json'
+    completed = json.loads(marker.read_text())['iter'] if marker.exists() else -1
     for name in names:
         if not re.fullmatch(r'ckpt_\d{6}\.pt', name):
             raise ValueError('invalid numbered checkpoint name')
         if not (src / name).is_file() or (src / name).is_symlink():
             raise ValueError(f'checkpoint does not exist: {name}')
+        if int(name[5:-3]) > completed:
+            raise ValueError(f'checkpoint is not complete: {name}')
+        if (dst / name).exists() and (dst / name).stat().st_size != (src / name).stat().st_size:
+            raise ValueError(f'published checkpoint size mismatch: {name}')
     if not names:
         return
     dst.mkdir(parents=True, exist_ok=True)
     for name in names:
+        if (dst / name).exists():
+            continue
         tmp = dst / (name + '.tmp')
         shutil.copyfile(src / name, tmp)
         os.replace(tmp, dst / name)
