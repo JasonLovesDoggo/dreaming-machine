@@ -160,6 +160,7 @@ function bindOverlays() {
     for (const s of Object.values(screens)) s.grid.style.display = e.target.checked ? 'block' : 'none';
   };
   $('show-ids').onchange = e => tileIds.toggle(e.target.checked);
+  tileIds.toggle($('show-ids').checked);
   for (const [side, s] of Object.entries(screens)) {
     s.sim.addEventListener('mousemove', e => {
       const r = s.sim.getBoundingClientRect();
