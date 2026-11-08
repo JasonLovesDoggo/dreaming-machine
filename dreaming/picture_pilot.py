@@ -44,9 +44,12 @@ def filename_for_seed(seed: int) -> str:
 
 def action_stream(driver: Driver, filename: str):
     os_, rng = driver.os, driver.rng
-    yield from driver.open_app('explorer', 'C:/PICS')
-    if 'explorer' not in os_.z or os_.ex_path != 'C:/PICS':
-        raise RuntimeError('driver failed to navigate to Pics')
+    for _ in range(3):
+        yield from driver.open_app('explorer', 'C:/PICS')
+        if 'explorer' in os_.z and os_.ex_path == 'C:/PICS':
+            break
+    else:
+        raise RuntimeError(f'driver failed to navigate to Pics: seed {os_.seed}')
     wc, wr, _, _ = driver.win('explorer')
     names = [name for name, _ in os_.fs['C:/PICS']]
     if filename in names:

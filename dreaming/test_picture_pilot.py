@@ -23,8 +23,9 @@ def test_invalid_seed_namespace(split, index):
 
 
 @pytest.mark.parametrize('filename', CORE_NAMES)
-def test_complete_load_and_exact_replay(filename):
-    data, meta, _ = run_episode(episode_seed('train', 0), filename)
+@pytest.mark.parametrize('index', [0, 697])
+def test_complete_load_and_exact_replay(filename, index):
+    data, meta, _ = run_episode(episode_seed('train', index), filename)
     assert set(data) == set(OBS_KEYS + ['action'])
     assert meta['load_stages'] == list(range(1, 11))
     assert meta['complete_tick'] - meta['open_tick'] == 9
@@ -32,7 +33,7 @@ def test_complete_load_and_exact_replay(filename):
     assert meta['counts']['newly_revealed_cells'] == 160
     assert meta['counts']['loading_ticks'] == 9
     replay_matches(data, meta)
-    repeated, repeated_meta, _ = run_episode(episode_seed('train', 0), filename)
+    repeated, repeated_meta, _ = run_episode(episode_seed('train', index), filename)
     assert repeated_meta == meta
     for key in data:
         np.testing.assert_array_equal(data[key], repeated[key])
