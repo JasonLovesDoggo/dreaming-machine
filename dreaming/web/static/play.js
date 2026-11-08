@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const W = 256, H = 192, COLS = 32, ROWS = 24, CELL = 24;
 const FRAME_BYTES = W * H, TILES = COLS * ROWS;
 const requestedHz = Number(new URLSearchParams(location.search).get('hz') || 15);
-const FRAME_MS = 1000 / Math.max(5, Math.min(30, Number.isFinite(requestedHz) ? requestedHz : 15));
+let targetHz = Math.max(5, Math.min(30, Number.isFinite(requestedHz) ? requestedHz : 15));
 const KEY_CHAR0 = 9;
 const HELD_KEYS = {ArrowUp: 1, ArrowDown: 2, ArrowLeft: 3, ArrowRight: 4, Control: 5};
 const QUEUED_KEYS = {Enter: 6, Escape: 7, Delete: 8, Backspace: 8};
@@ -66,7 +66,7 @@ function bindInput() {
   });
   window.addEventListener('blur', cancel);
   window.addEventListener('keydown', e => {
-    if (e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'SELECT' || e.target.id === 'fps-target' || e.target.id === 'ids-opacity') return;
     if (HELD_KEYS[e.key]) {
       e.preventDefault();
       if (!input.held.includes(HELD_KEYS[e.key])) input.held.push(HELD_KEYS[e.key]);
@@ -123,6 +123,7 @@ function drawTileGrid(canvas) {
 
 const tileIds = {
   on: false,
+  opacity: 1,
   last: {},            // side -> Uint16Array of the ids currently drawn
   hover: {side: 'real', idx: -1},
   sectionCache: new Map(),
@@ -182,6 +183,13 @@ const tileIds = {
     $('tileinfo').textContent = `${side} tile (${idx % COLS},${Math.floor(idx / COLS)})  id ${t}  ${this.describe(t)}`;
   },
 
+  applyOpacity() {
+    for (const s of Object.values(screens)) {
+      s.ids.style.opacity = this.on ? this.opacity : '';
+      s.sim.style.opacity = this.on ? 1 - 0.7 * this.opacity : '';
+    }
+  },
+
   toggle(on) {
     this.on = on;
     this.last = {};
@@ -191,10 +199,26 @@ const tileIds = {
       s.el.classList.toggle('dim', on);
       s.ids.getContext('2d').clearRect(0, 0, s.ids.width, s.ids.height);
     }
+    $('ids-opacity-control').hidden = !on;
+    this.applyOpacity();
   },
 };
 
 function bindOverlays() {
+  const opacityControl = document.createElement('label');
+  opacityControl.id = 'ids-opacity-control';
+  opacityControl.append(' opacity ');
+  const opacityInput = document.createElement('input');
+  Object.assign(opacityInput, {id: 'ids-opacity', type: 'range', min: '0', max: '1', step: '0.05', value: '1'});
+  const opacityValue = document.createElement('span');
+  opacityValue.textContent = '1';
+  opacityControl.append(opacityInput, opacityValue);
+  $('show-ids').closest('label').after(opacityControl);
+  opacityInput.oninput = () => {
+    tileIds.opacity = Number(opacityInput.value);
+    opacityValue.textContent = opacityInput.value;
+    tileIds.applyOpacity();
+  };
   for (const s of Object.values(screens)) drawTileGrid(s.grid);
   $('show-grid').onchange = e => {
     for (const s of Object.values(screens)) s.grid.style.display = e.target.checked ? 'block' : 'none';
@@ -230,7 +254,24 @@ function connect() {
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + base + '/ws');
   ws.binaryType = 'arraybuffer';
   const pending = [], compressed = typeof DecompressionStream === 'function';
-  let clock, messages = Promise.resolve(), lastFrame = null, avgMs = FRAME_MS;
+  let clock, messages = Promise.resolve(), lastFrame = null, avgMs = 1000 / targetHz;
+  const targetControl = document.createElement('label');
+  targetControl.title = 'One frame = one simulator step, so higher values also speed up the game.';
+  const targetInput = document.createElement('input');
+  Object.assign(targetInput, {id: 'fps-target', type: 'number', min: '5', max: '30', step: '1', value: String(targetHz)});
+  targetControl.append('target ', targetInput, ' fps');
+  $('fps').after(targetControl);
+  targetInput.onchange = () => {
+    const value = Number(targetInput.value);
+    targetHz = Math.max(5, Math.min(30, targetInput.value !== '' && Number.isFinite(value) ? value : 15));
+    targetInput.value = String(targetHz);
+    clearInterval(clock);
+    if (ws.readyState === WebSocket.OPEN) clock = setInterval(send, 1000 / targetHz);
+    const url = new URL(location.href);
+    url.searchParams.set('hz', targetHz);
+    history.replaceState(null, '', url);
+    window.telemetry?.action('fps-target');
+  };
 
   function send() {
     if (ws.readyState !== WebSocket.OPEN || pending.length >= 3) return;
@@ -245,7 +286,7 @@ function connect() {
     input.cmd = null;
   }
 
-  ws.onopen = () => { send(); clock = setInterval(send, FRAME_MS); };
+  ws.onopen = () => { send(); clock = setInterval(send, 1000 / targetHz); };
   ws.onclose = () => clearInterval(clock);
   ws.onmessage = e => {
     const receivedAt = performance.now();
