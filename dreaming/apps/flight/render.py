@@ -1,14 +1,13 @@
 """First-person scenery matched to detailed edge tiles; fixed cockpit and dynamic gauges."""
 from functools import lru_cache
 import numpy as np
-from .world import terrain
+from .world import terrain, fbm
 from ...tiles import ATLAS
-from ...flight_art import W, H, FRAME_COLORS, cloud, cockpit, outside_tiles
+from ...flight_art import W, H, FILLS, FRAME_COLORS, PAIRS, cockpit, outside_tiles
 
 VW, VH = W, H
 ART = np.stack(outside_tiles())
 FRAME = cockpit()
-CLOUD = cloud()
 YY, XX = np.mgrid[:112, :W]
 
 
@@ -16,29 +15,41 @@ def render_scene(f):
     dx, dy = XX - W / 2, YY - 53 - f.pitch * 55
     below = dy * np.cos(f.roll) - dx * np.sin(f.roll)
     horizontal = dx * np.cos(f.roll) + dy * np.sin(f.roll)
-    depth = np.clip(max(4, f.alt) * 100 / np.maximum(1, below), 4, 1800)
-    side = horizontal * depth / 150
+    depths = np.geomspace(8, 2200, 56)[:, None]
+    columns = np.arange(-64, W + 64) - W / 2
+    depth = depths
+    side = columns * depth / 150
     x = f.x + depth * np.sin(f.heading) + side * np.cos(f.heading)
     y = f.y + depth * np.cos(f.heading) - side * np.sin(f.heading)
-    _, material = terrain(x, y, f.seed)
+    height, material = terrain(x, y, f.seed)
     material = np.where((material >= 4) & (depth > 250), 2, material)
-    colors = np.array([1, 13, 14, 14, 5, 7], np.uint8)
-    img = np.where(below > 0, colors[material], 12).astype(np.uint8)
-    for i in range(3):
-        phase = round(((f.seed * 23 + i * 83 - f.heading * 60 - f.x * .02) % (W + 32) - 16) / 8) * 8
-        cy = round((8 + (i * 11 + f.seed * 7) % 24 + f.pitch * 30) / 8) * 8
-        if (int(f.y / 300) + i + f.seed) % 3 != 0:
-            cx, ry = XX - phase, YY - cy
-            mask = (cx >= 0) & (cx < 32) & (ry >= 0) & (ry < 16)
-            mask &= CLOUD[np.clip(ry, 0, 15), np.clip(cx, 0, 31)] == 7
-            img[mask & (below < -4)] = 7
+    colors = np.array([1, 13, 11, 14, 5, 7], np.uint8)
+    projected = (f.alt - height) * 100 / depth
+    index = np.clip(np.rint(horizontal + W / 2 + 64).astype(int), 0, len(columns) - 1)
+    img = np.full(XX.shape, 12, np.uint8)
+    sky = np.ones(XX.shape, bool)
+    for row in range(len(depths) - 1, -1, -1):
+        visible = below >= projected[row, index]
+        img[visible] = colors[material[row, index[visible]]]
+        sky &= ~visible
+    noise = fbm(horizontal / 65 + f.heading * 2 + f.x / 3000,
+                below / 24 + f.y / 3000, f.seed + 10000)
+    density = np.clip((noise - .015 - .2 * ((below + 27) / 50) ** 2) / .025, 0, 1)
+    threshold = ((XX + YY * 2) % 4 + .5) / 4
+    img[sky & (density > threshold)] = 7
     return img
 
 
 @lru_cache(maxsize=65536)
 def match_tile(data):
     patch = np.frombuffer(data, np.uint8).reshape(8, 8)
-    return int((ART != patch).sum((1, 2)).argmin())
+    errors = (ART != patch).sum((1, 2))
+    best = int(errors.argmin())
+    if best < len(FILLS) and errors[best] >= 10:
+        edge = int(errors[len(FILLS):len(FILLS) + len(PAIRS) * 64].argmin()) + len(FILLS)
+        if errors[edge] <= errors[best] + 4:
+            best = edge
+    return best
 
 
 def render_tiles(f):

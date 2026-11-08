@@ -319,12 +319,12 @@ def build_atlas():
         if data not in aliases:
             aliases[data] = len(unique)
             unique.append((key, tile))
-    assert len(unique) <= 512
+    assert len(unique) <= 1024
     ids = []
     with A.section('app_flight'):
         for key, tile in unique[:256]:
             ids.append(A.add(key, tile))
-    # Flight owns at most the first 256 IDs of app_spare (2304..2559).
+    # Flight owns at most the first 768 IDs of app_spare (2304..3071).
     with A.section('app_spare'):
         for key, tile in unique[256:]:
             ids.append(A.add(key, tile))

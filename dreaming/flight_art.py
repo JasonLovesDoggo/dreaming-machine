@@ -2,31 +2,24 @@
 import numpy as np
 
 W, H = 224, 152
-PAIRS = [(12, 1), (12, 14), (1, 13), (13, 14), (12, 7), (1, 5), (1, 14), (12, 13)]
-FILLS = [12, 1, 14, 13, 7, 5, 0, 6]
-FRAME_COLORS = [12, 1, 14, 13]
-
-
-def cloud():
-    yy, xx = np.mgrid[:16, :32]
-    mask = ((xx - 16) / 15) ** 2 + ((yy - 10) / 5) ** 2 <= 1
-    mask |= ((xx - 11) / 7) ** 2 + ((yy - 7) / 6) ** 2 <= 1
-    mask |= ((xx - 21) / 6) ** 2 + ((yy - 8) / 5) ** 2 <= 1
-    return np.where(mask, 7, 12).astype(np.uint8)
+PAIRS = [(12, 1), (12, 14), (12, 11), (1, 13), (13, 11), (11, 14), (12, 7), (11, 5), (5, 7), (1, 11), (13, 14)]
+FILLS = [12, 1, 14, 13, 7, 5, 0, 6, 11]
+FRAME_COLORS = [12, 1, 14, 13, 11, 7]
 
 
 def outside_tiles():
     yy, xx = np.mgrid[:8, :8]
     out = [np.full((8, 8), c, np.uint8) for c in FILLS]
     for a, b in PAIRS:
-        for angle in np.arange(8) * np.pi / 4:
-            for offset in (-3, 0, 3):
+        for angle in np.arange(16) * np.pi / 8:
+            for offset in (-3, -1, 1, 3):
                 mask = (xx - 3.5) * np.cos(angle) + (yy - 3.5) * np.sin(angle) > offset
                 out.append(np.where(mask, b, a).astype(np.uint8))
     out.append(np.where((xx + yy * 3) % 16 == 0, 7, 12).astype(np.uint8))
     out.append(np.where((xx + yy * 2) % 16 == 0, 12, 1).astype(np.uint8))
-    puff = cloud()
-    out += [puff[r:r+8, c:c+8] for r in (0, 8) for c in (0, 8, 16, 24)]
+    for a, b in ((12, 7), (11, 14)):
+        for coverage in (1, 2, 3):
+            out.append(np.where((xx + yy * 2) % 4 < coverage, b, a).astype(np.uint8))
     return out
 
 
@@ -41,7 +34,7 @@ def cockpit():
     frame |= yy >= panel_top
     img[frame] = 0
     inner = frame & (yy >= panel_top + 2)
-    img[inner] = np.where((xx[inner] + yy[inner]) % 2 == 0, 5, 0)
+    img[inner] = 5
     img[frame & (yy < 104) & (((left >= 4) & (left < 5)) | ((right >= 4) & (right < 5)))] = 5
     img[(yy > 146) & frame] = 5
     for x0 in (39, 168):
@@ -56,7 +49,7 @@ def dial(kind, level):
     yy, xx = np.mgrid[:24, :24]
     x, y = xx - 11.5, yy - 11.5
     r = x * x + y * y
-    img = np.where((xx + yy) % 2 == 0, 5, 0).astype(np.uint8)
+    img = np.full((24, 24), 5, np.uint8)
     img[r < 130] = 6
     img[r < 100] = 0
     if kind == 'attitude':
