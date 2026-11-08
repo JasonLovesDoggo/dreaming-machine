@@ -106,14 +106,12 @@ def fetch(run: str = 'main'):
 
 web_image = (modal.Image.debian_slim(python_version='3.11')
              .pip_install('torch', 'numpy', 'pillow', 'fastapi[standard]')
-             .add_local_python_source('dreaming'))
+             .add_local_python_source('dreaming', ignore=['**/__pycache__/**']))
 
 
 @app.function(image=web_image, gpu=['L4', 'A10G', 'T4', 'L40S'], volumes={'/vol': vol}, scaledown_window=300, timeout=24 * 3600)
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app(label='dreaming-computer')
 def web():
-    import dreaming.demo as d
-    d.DATA_DIR = '/vol/shards'
-    d.init_neural('/vol/runs/main', 'cuda')
-    return d.app
+    from dreaming.web import create_app
+    return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', device='cuda')

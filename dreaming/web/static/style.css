@@ -1,0 +1,20 @@
+body { background: #181a20; color: #ddd; font-family: monospace; margin: 20px; }
+a { color: #8cf; }
+button, select, input { font-family: monospace; margin: 4px; }
+button { padding: 6px 12px; }
+footer { margin-top: 16px; color: #888; }
+.pixel { image-rendering: pixelated; }
+
+/* play page */
+.screens { display: flex; gap: 24px; }
+.screen { position: relative; width: 768px; height: 576px; border: 2px solid #444; }
+.screen canvas { position: absolute; left: 0; top: 0; width: 768px; height: 576px; }
+.screen canvas.sim { image-rendering: pixelated; cursor: none; }
+.screen canvas.overlay { pointer-events: none; display: none; }
+.screen.dim canvas.sim { opacity: 0.3; }
+#tileinfo { height: 1.2em; color: #ffd75e; }
+
+/* data viewer + atlas */
+#frame { width: 768px; height: 576px; border: 2px solid #444; }
+#scrub { width: 768px; }
+.sheet { border: 1px solid #444; display: block; margin: 6px 0 18px; }

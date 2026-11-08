@@ -14,7 +14,7 @@ scripted "smart user", used to train a world model that predicts the next screen
 ```bash
 python -m dreaming.dataset --out data/local --steps 400000          # ~40s on 8 cores, ~16 MB
 python -m dreaming.train --data data/local --out runs/local         # GPU recommended
-python -m dreaming.demo --ckpt runs/local/ckpt.pt --port 8000       # real vs neural, side by side
+python -m dreaming.demo --ckpt runs/local/ckpt.pt --data data/local  # web UI (dreaming/web), real vs neural
 
 # Modal
 modal run modal_app.py::gen_data --total-steps 20000000

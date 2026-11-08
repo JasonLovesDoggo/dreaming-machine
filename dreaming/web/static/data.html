@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Dreaming Computer: training data</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <h2>Dreaming Computer: training data viewer</h2>
+  shard <select id="shard"></select>
+  episode <select id="episode"></select>
+  <button id="play">play</button>
+  speed <select id="speed"><option>1</option><option selected>2</option><option>4</option><option>8</option></select>x
+  <button id="random">random spot</button><br>
+  <input id="scrub" type="range" min="0" value="0"><br>
+  <span id="info"></span><br>
+  <img id="frame" class="pixel">
+  <footer><a href=".">play the computer</a> &middot; <a href="sprites">tile &amp; sprite atlas</a></footer>
+  <script src="static/data.js"></script>
+</body>
+</html>

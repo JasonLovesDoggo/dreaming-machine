@@ -430,7 +430,7 @@ class Driver:
         ang, best = d.ang, {}
         for key, da in ((KEY_UP, 0), (KEY_LEFT, -1), (KEY_RIGHT, 1)):
             d.ang = (ang + da) % dm.NANG
-            dx, dy = d._dir()
+            dx, dy = d.direction()
             best[key] = (dx * tx + dy * ty) / (math.hypot(tx, ty) + 1e-6)
         d.ang = ang
         if best[KEY_UP] > 0.97 and d.raycast()[4][dm.VW // 2] > 0.5:
@@ -459,7 +459,7 @@ class Driver:
                 yield self.act(r.randrange(6))
                 continue
             wall = d.raycast()[4]
-            targets = [(depth, sx, size) for imp, (sx, size, depth) in zip(d.imps, d._project_all())
+            targets = [(depth, sx, size) for imp, (sx, size, depth) in zip(d.imps, d.project_imps())
                        if imp['state'] != 2 and depth > 0 and 0 <= sx < dm.VW and depth < 7 and depth < wall[int(sx)]]
             if targets and r.random() < 0.85:
                 depth, sx, size = min(targets)
