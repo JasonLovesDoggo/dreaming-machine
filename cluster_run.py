@@ -8,7 +8,7 @@ import time
 
 import modal
 
-from dreaming.cluster import (check_budget, check_lock, config, lock_config, merge_metrics,
+from dreaming.cluster import (CalibrationGuard, check_budget, check_lock, config, lock_config, merge_metrics,
                               publish_checkpoints, publish_set, run_with_deadline,
                               torchrun_command, validate_run_id, write_json)
 
@@ -51,6 +51,8 @@ def train_cluster(cfg: dict):
     ledger_path = Path(OUT_DIR) / 'ledger.json'
     records: list[dict] = []
     publish_names = publish_set(cfg, cfg['start_iter'])
+    guard = CalibrationGuard(Path(OUT_DIR) / 'metrics.jsonl', cfg, kill_at)
+    spawned = set()
 
     def ready():
         return sorted(name for name in publish_names if (Path(OUT_DIR) / name).exists())
@@ -64,8 +66,11 @@ def train_cluster(cfg: dict):
         out.commit()
 
     def tick():
+        guard()
         out.commit()
-        mirror_metrics.spawn(ready())
+        new = sorted(set(ready()) - spawned)
+        mirror_metrics.spawn(new)
+        spawned.update(new)
 
     try:
         rc, timed_out = run_with_deadline(torchrun_command(cfg, rank, ips[0], cfg['resume']), kill_at,
@@ -106,26 +111,28 @@ def read_state():
 
 
 @app.local_entrypoint()
-def launch(phase: str = 'first', steps: int = 0, lr: float = 4e-4, warmup: int = 200,
+def launch(phase: str = 'long', steps: int = 0, end_iter: int = 45000,
+           guard_max_loss: float = 2.0, lr: float = 4e-4, warmup: int = 200,
            iters: int = 65000, budget_hours: float = 8., dry_run: bool = False,
            min_lr_frac: float = 0.1, restart_iter: int = 5000, batch: int = 32,
            unroll: int = 6, data_path: str = '/vol/shards',
            extra_data: str = '/vol/shards_cats_dense_v1', extra_frac: float = 0.15,
            extra_shards: int = 40, holdout_episodes: int = 2,
            source: str = '/vol/runs/atlas_v2_first_5k/ckpt_005000.pt', total_cap_hours: float = 8.):
-    cfg = config(RUN_ID, phase, steps or None, lr=lr, warmup=warmup, iters=iters,
+    lock, records, resumed, marker = read_state()
+    if resumed and marker is None:
+        raise ValueError('checkpoint exists without run.json: cannot determine publication start')
+    start_iter = marker['iter'] if resumed else restart_iter
+    cfg = config(RUN_ID, phase, steps or None, end_iter=end_iter, start_iter=start_iter,
+                 guard_max_loss=guard_max_loss, lr=lr, warmup=warmup, iters=iters,
                  budget_hours=budget_hours, min_lr_frac=min_lr_frac, restart_iter=restart_iter,
                  batch=batch, unroll=unroll, data=data_path, extra_data=extra_data,
                  extra_frac=extra_frac, extra_shards=extra_shards,
                  holdout_episodes=holdout_episodes, source=source, total_cap_hours=total_cap_hours)
-    lock, records, resumed, marker = read_state()
     check_lock(cfg, lock)
     check_budget(records, budget_hours * 3600, total_cap_hours * 3600)
     cfg['deadline'] = time.time() + budget_hours * 3600
     cfg['resume'] = 'auto' if resumed else source
-    if resumed and marker is None:
-        raise ValueError('checkpoint exists without run.json: cannot determine publication start')
-    cfg['start_iter'] = marker['iter'] if resumed else restart_iter
     print(json.dumps(cfg, indent=2))
     print(shlex.join(torchrun_command(cfg, resume=cfg['resume'])))
     if not dry_run:

@@ -26,17 +26,20 @@ def validate_run_id(run_id):
     return name
 
 
-def config(run_id, phase='first', steps=None, **overrides):
+def config(run_id, phase='long', steps=None, end_iter=45000, start_iter=5000, **overrides):
     validate_run_id(run_id)
-    presets = {'first': (1094, 10, 625), 'pilot': (300, 10, 2**63 - 1),
-               'gate': (700, 10, 1000), 'long': (10000, 25, 10000)}
-    n, log, ckpt = presets[phase]
-    cfg = dict(run_id=run_id, phase=phase, steps=n if steps is None else steps, log_every=log,
-               ckpt_every=ckpt, lr=4e-4, warmup=200, min_lr_frac=0.1, restart_iter=5000,
+    if phase != 'long':
+        raise ValueError('only the long phase is supported')
+    steps = end_iter - start_iter if steps is None else steps
+    cfg = dict(run_id=run_id, phase=phase, steps=steps, start_iter=start_iter,
+               end_iter=start_iter + steps, log_every=10,
+               ckpt_every=5000, guard_max_loss=2.0, lr=4e-4, warmup=200, min_lr_frac=0.1, restart_iter=5000,
                iters=65000, batch=32, unroll=6, data='/vol/shards',
                extra_data='/vol/shards_cats_dense_v1', extra_frac=0.15, extra_shards=40,
                holdout_episodes=2, source=SOURCE, budget_hours=8., total_cap_hours=8.)
     cfg.update(overrides)
+    if cfg['end_iter'] % 5000 or cfg['end_iter'] > cfg['iters']:
+        raise ValueError('end iteration must be a multiple of 5000 within the cosine horizon')
     if not (0 <= cfg['restart_iter'] < cfg['iters'] and cfg['warmup'] >= 1
             and 0 <= cfg['min_lr_frac'] <= 1 and cfg['steps'] > 0 and cfg['lr'] > 0
             and 0 < cfg['budget_hours'] <= 8 and cfg['total_cap_hours'] > 0):
@@ -129,6 +132,8 @@ def run_with_deadline(cmd, kill_at, env=None, on_tick=None, tick_every=300, grac
             if on_tick and time.monotonic() >= next_tick:
                 try:
                     on_tick()
+                except TrainingGuardError:
+                    raise
                 except Exception:
                     logging.exception('periodic commit/mirror failed')
                 next_tick = time.monotonic() + tick_every
@@ -193,3 +198,43 @@ def publish_set(cfg, start):
     cadence = cfg['ckpt_every']
     return {f'ckpt_{it:06d}.pt' for it in
             [*range((start // cadence + 1) * cadence, end + 1, cadence), end] if it > start}
+
+
+class TrainingGuardError(RuntimeError):
+    pass
+
+
+class CalibrationGuard:
+    def __init__(self, path, cfg, kill_at):
+        self.path, self.cfg, self.kill_at = Path(path), cfg, kill_at
+        self.summarized = False
+
+    def __call__(self):
+        if not self.path.exists():
+            return
+        latest = None
+        for line in self.path.read_text().splitlines(keepends=True):
+            if not line.endswith('\n'):
+                continue
+            row = json.loads(line)
+            if row.get('kind', 'train') != 'train' or row.get('it', 0) <= self.cfg['start_iter']:
+                continue
+            for key in ('loss', 'grad_norm'):
+                value = row.get(key)
+                if not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise TrainingGuardError(f'guard: invalid {key} at iteration {row.get("it")}')
+            if (row['it'] > self.cfg['restart_iter'] + self.cfg['warmup']
+                    and row['loss'] > self.cfg['guard_max_loss']):
+                raise TrainingGuardError(f'guard: loss exceeds {self.cfg["guard_max_loss"]} at {row["it"]}')
+            latest = row
+        if latest is None or latest['it'] - self.cfg['start_iter'] < 300:
+            return
+        sps = latest.get('samples_per_sec', 0)
+        ups = sps / (self.cfg['batch'] * self.cfg['unroll'] * 24)
+        projected = time.time() + (self.cfg['end_iter'] - latest['it']) / ups if ups > 0 else float('inf')
+        if not self.summarized:
+            print(f'calibration: samples/s={sps:.2f} updates/s={ups:.4f} loss={latest["loss"]:.4f} '
+                  f'grad_norm={latest["grad_norm"]:.4f} projected_end={projected:.0f} kill_at={self.kill_at:.0f}', flush=True)
+            self.summarized = True
+        if projected > self.kill_at:
+            logging.warning('projected end %.0f exceeds kill_at %.0f (warning only)', projected, self.kill_at)
