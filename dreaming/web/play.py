@@ -5,6 +5,7 @@ Each server message is [n_frames:u8][has_ids:u8] + n_frames * 256x192 palette by
 import json
 import logging
 import random
+import time
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..os_sim import MicroOS, obs_to_pixels
@@ -72,7 +73,11 @@ async def play_socket(sock: WebSocket):
             msg = json.loads(await sock.receive_text())
             session.command(msg.get('cmd'), msg.get('ckpt'))
             action = tuple(int(msg[k]) for k in ('x', 'y', 'btn', 'key'))
+            started = time.perf_counter()
             screens = session.step(action, float(msg.get('temp', 0.0)))
+            latency_ms = (time.perf_counter() - started) * 1000
             await sock.send_bytes(encode(screens, bool(msg.get('ids'))))
+            if msg.get('telemetry'):
+                await sock.send_json(dict(latency_ms=latency_ms, app=session.real.focus))
     except WebSocketDisconnect:
         pass

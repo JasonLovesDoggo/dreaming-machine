@@ -194,12 +194,20 @@ function connect() {
     const temp = parseFloat($('temp').value);
     $('temp-value').textContent = temp;
     sentAt = performance.now();
-    ws.send(JSON.stringify({...nextAction(), cmd: input.cmd, temp, ckpt: $('ckpt').value, ids: tileIds.on}));
+    const action = nextAction();
+    if (action.btn) window.telemetry?.action('mouse');
+    if (action.key) window.telemetry?.action('key');
+    window.telemetry?.checkpoint($('ckpt').value);
+    ws.send(JSON.stringify({...action, cmd: input.cmd, temp, ckpt: $('ckpt').value, ids: tileIds.on, telemetry: true}));
     input.cmd = null;
   }
 
   ws.onopen = send;
   ws.onmessage = e => {
+    if (typeof e.data === 'string') {
+      window.telemetry?.server(JSON.parse(e.data));
+      return;
+    }
     const buf = new Uint8Array(e.data), n = buf[0], hasIds = buf[1];
     SIDES.slice(0, n).forEach((side, k) => drawScreen(screens[side].sim, buf, 2 + k * FRAME_BYTES));
     if (hasIds && tileIds.on) {
@@ -211,6 +219,7 @@ function connect() {
     avgMs = avgMs * 0.9 + (now - lastFrame) * 0.1;
     lastFrame = now;
     $('fps').textContent = ` ${(1000 / avgMs).toFixed(1)} fps`;
+    window.telemetry?.frame(1000 / avgMs);
     setTimeout(send, Math.max(0, FRAME_MS - (now - sentAt)));
   };
 }

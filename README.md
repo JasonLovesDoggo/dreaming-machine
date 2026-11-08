@@ -21,3 +21,21 @@ modal run modal_app.py::gen_data --total-steps 20000000
 modal run modal_app.py::train --gpus 8 --iters 30000
 modal run modal_app.py::fetch
 ```
+
+### Demo telemetry
+
+The demo sends anonymous page views, visible-page duration heartbeats (15 seconds),
+control/action counts, active-app frame counts, checkpoint names, client FPS and
+simulator/model step latency to `POST /telemetry/events`. It never records typed
+text or raw IP addresses; addresses are salted SHA-256 hashes truncated to 16 hex
+characters. Visitor IDs persist in localStorage; each page load gets a session ID.
+User agents are retained. `GET /telemetry/summary` is a public, aggregate JSON view
+(durations in seconds, latency in milliseconds; checkpoints count reports).
+
+JSONL files live in `./runs/telemetry` locally and `/vol/telemetry` on Modal, with
+the existing data volume committed every 30 seconds while there are new events.
+Set `DREAMING_TELEMETRY_DIR` to override the directory and optionally set
+`DREAMING_TELEMETRY_SALT` for a stable private salt; otherwise a salt is generated
+in that directory. Last uncommitted events may be lost if a container is killed.
+Summaries read files visible to the current container (no cross-container reload).
+There is no retention/rotation beyond daily files; remove old JSONL files as needed.

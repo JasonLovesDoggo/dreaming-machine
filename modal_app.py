@@ -114,4 +114,6 @@ web_image = (modal.Image.debian_slim(python_version='3.11')
 @modal.asgi_app(label='dreaming-computer')
 def web():
     from dreaming.web import create_app
+    from dreaming.web.telemetry import configure_modal
+    configure_modal(vol)
     return create_app(data_dir=DATA, ckpt_dir=f'{RUNS}/main', device='cuda')
