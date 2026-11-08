@@ -898,7 +898,7 @@ class MicroOS:
         if 'dreamer' in self.z:
             ext[8:12] = [int(bool(self.chat.pending)), min(31, self.chat.progress // 4),
                           min(31, self.chat.scroll), len(self.chat.messages)]
-        # Flight owns extension ext 12..15.
+        # Flight owns extension fields 12..15.
         if 'flight' in self.z:
             f = self.flight
             ext[12:16] = [min(31, int(f.alt / 12)), min(31, int(f.speed * 5)), int(f.throttle * 31), int(f.crash > 0)]

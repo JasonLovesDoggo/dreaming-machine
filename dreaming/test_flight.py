@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from .apps import flight as fl
 from .apps.flight.render import render_scene, match_tile, ART
-from .os_sim import MicroOS, obs_to_pixels, STATE_VOCAB, KEY_PLUS
+from .os_sim import MicroOS, obs_to_pixels, STATE_VOCAB, KEY_PLUS, DESK_ICONS
 from .tiles import VOCAB, ATLAS, grid_to_pixels
 from .model import WorldModel, Config, compute_loss, decode
 from .dataset import OBS_KEYS
@@ -76,6 +76,19 @@ def test_compact_atlas_and_shared_gauge_parts():
         assert ATLAS[('flight_dial', 'speed', level, 0, 0)] == ATLAS[('flight_dial', 'altitude', level, 0, 0)]
     assert len({ATLAS[('flight_dial', 'speed', level, r, c)]
                 for level in range(16) for r in range(3) for c in range(3)}) < 70
+
+
+def test_flight_and_existing_app_state_slots():
+    assert [item[2][0] for item in DESK_ICONS[-3:]] == ['calculator', 'terminal', 'flight']
+    s = MicroOS(3)
+    s.open_app('calculator')
+    s.open_app('terminal')
+    before = s.ext_state_fields()
+    s.open_app('flight')
+    s.flight.alt, s.flight.speed, s.flight.throttle = 120, 3, .5
+    after = s.ext_state_fields()
+    assert after[:12] == before[:12]
+    assert after[12:16] == [10, 15, 15, 0]
 
 
 def test_banked_horizon_attitude_and_cracked_windscreen(monkeypatch):
