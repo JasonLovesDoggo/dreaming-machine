@@ -10,7 +10,9 @@ import modal.experimental
 app = modal.App('dreaming-machine')
 vol = modal.Volume.from_name('dreaming-computer-data', create_if_missing=True)
 image = (modal.Image.debian_slim(python_version='3.11')
+         .apt_install('libibverbs1', 'ibverbs-providers', 'rdma-core', 'librdmacm1')
          .pip_install('torch==2.10.0', index_url='https://download.pytorch.org/whl/cu130')
+         .run_commands('ln -sf "$(python -c \'import sysconfig; print(sysconfig.get_path("purelib"))\')/nvidia/cu13/lib/libcudart.so.13" /usr/local/lib/libcudart.so && ldconfig')
          .pip_install('numpy', 'pillow')
          .add_local_python_source('dreaming'))
 DATA = '/vol/shards'
