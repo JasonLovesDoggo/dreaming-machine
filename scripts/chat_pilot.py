@@ -110,6 +110,8 @@ def digest(ep):
 
 def make_shard(job):
     path, seeds, length, meta = job
+    if os.path.exists(path):
+        raise FileExistsError(path)
     eps = [episode(s, length) for s in seeds]
     data = {k: np.concatenate([e[0][k] for e in eps]) for k in eps[0][0]}
     data['ep_len'] = np.array([len(e[0]['action']) for e in eps], np.int64)
@@ -122,15 +124,24 @@ def make_shard(job):
     return path
 
 
-def main():
+def positive(v):
+    n = int(v)
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f'must be positive: {v}')
+    return n
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', required=True)
-    ap.add_argument('--episodes', type=int, default=50)
-    ap.add_argument('--ep-len', type=int, default=2000)
-    ap.add_argument('--eps-per-shard', type=int, default=10)
+    ap.add_argument('--episodes', type=positive, default=50)
+    ap.add_argument('--ep-len', type=positive, default=2000)
+    ap.add_argument('--eps-per-shard', type=positive, default=10)
     ap.add_argument('--seed', type=int, default=777)
-    ap.add_argument('--workers', type=int, default=os.cpu_count())
-    a = ap.parse_args()
+    ap.add_argument('--workers', type=positive, default=os.cpu_count())
+    a = ap.parse_args(argv)
+    if os.path.exists(a.out) and (not os.path.isdir(a.out) or os.listdir(a.out)):
+        ap.error(f'--out {a.out} exists and is not an empty directory; refusing to overwrite pilot data')
     os.makedirs(a.out, exist_ok=True)
     root = Path(__file__).resolve().parents[1]
     sha = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, capture_output=True, text=True).stdout.strip()
