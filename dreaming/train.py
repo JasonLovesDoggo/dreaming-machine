@@ -12,26 +12,45 @@ import numpy as np
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from .dataset import load_shards, OBS_KEYS
+from .dataset import OBS_KEYS
 from .model import WorldModel, Config, compute_loss, decode
 from .tiles import VOCAB, PAL, ATLAS
+from .metrics import append_metrics
 
 
 class Windows:
     """Random length-(L+1) windows that stay inside one episode."""
 
-    def __init__(self, data, L, rng):
+    def __init__(self, data, L, rng, sampler_v2=False, mode_mix=None):
         self.d, self.L, self.rng = data, L, rng
         ends = np.cumsum(data['ep_len'])
         starts = ends - data['ep_len']
         self.valid = np.concatenate([np.arange(s, e - L - 1) for s, e in zip(starts, ends)])
+        if not len(self.valid):
+            raise ValueError('no episodes long enough for the requested unroll')
         self.ep_start = np.repeat(starts, data['ep_len'])
         g = data['grid'].reshape(len(data['grid']), -1)
         changed = np.zeros(len(g), np.float64)
         changed[1:] = (g[1:] != g[:-1]).sum(1)
+        if sampler_v2:
+            for key, scale in [('doom_cols', 4), ('doom_spr', 4), ('doom_meta', 1), ('cursor', 1), ('state', 1)]:
+                values = data[key].reshape(len(g), -1)
+                changed[1:] += (values[1:] != values[:-1]).sum(1) / scale
         cs = np.concatenate([[0], np.cumsum(changed)])
         act = cs[self.valid + L + 1] - cs[self.valid + 1]
-        w = 0.25 + np.minimum(act, 50)
+        w = 1 + np.minimum(act, 10) if sampler_v2 else 0.25 + np.minimum(act, 50)
+        if sampler_v2:
+            modes = data['mode']
+            available = set(modes[self.valid])
+            if mode_mix is not None:
+                if set(mode_mix) - available:
+                    raise ValueError('mode mix names modes with no eligible windows')
+                if any(not np.isfinite(v) or v < 0 for v in mode_mix.values()) or not sum(mode_mix.values()):
+                    raise ValueError('mode mix must contain finite nonnegative weights with positive total')
+            for mode in available:
+                mask = modes[self.valid] == mode
+                mass = (modes == mode).mean() if mode_mix is None else mode_mix.get(mode, 0)
+                w[mask] *= mass / w[mask].sum()
         self.p = w / w.sum()
 
     def batch(self, B):
@@ -42,6 +61,51 @@ class Windows:
         prev = np.where(idx - 1 >= self.ep_start[idx], self.d['action'][np.maximum(idx - 1, 0), 2], 0)
         out['prev_btn'] = prev.astype(np.uint8)
         return out
+
+
+def shard_mode(path):
+    if os.path.exists(path + '.json'):
+        with open(path + '.json') as f:
+            mode = json.load(f).get('mode')
+        if mode:
+            return mode
+    name = os.path.basename(path)
+    return next((m for m in ['doom', 'cards', 'windows', 'calculator', 'terminal', 'dreamer', 'cats'] if m in name), 'mixed')
+
+
+def partition_shards(paths, rank, world):
+    if world < 1 or not 0 <= rank < world:
+        raise ValueError('shard partition requires world >= 1 and 0 <= rank < world')
+    if not paths:
+        raise ValueError('shard partition would give every rank zero shards')
+    if len(paths) < world:
+        return paths
+    modes = {}
+    for path in paths:
+        modes.setdefault(shard_mode(path), []).append(path)
+    partitions = [[] for _ in range(world)]
+    counter = 0
+    for mode in sorted(modes):
+        for path in sorted(modes[mode]):
+            partitions[counter % world].append(path)
+            counter += 1
+    if any(not part for part in partitions):
+        raise ValueError('shard partition would give a rank zero shards')
+    return partitions[rank]
+
+
+class MixedWindows:
+    def __init__(self, primary, extra, frac):
+        self.primary, self.extra, self.frac = primary, extra, frac
+
+    def batch(self, B):
+        n = round(B * self.frac)
+        if not n:
+            return self.primary.batch(B)
+        if n == B:
+            return self.extra.batch(B)
+        a, b = self.primary.batch(B - n), self.extra.batch(n)
+        return {k: np.concatenate([a[k], b[k]]) for k in a}
 
 
 def to_torch(b, device):
@@ -111,6 +175,13 @@ def parse_args():
     ap.add_argument('--ckpt-every', type=int, default=1000)
     ap.add_argument('--compile', action='store_true')
     ap.add_argument('--resume', default='')
+    ap.add_argument('--sync-fix', action='store_true', help='accumulate detached loss metrics on device until logging')
+    ap.add_argument('--sampler-v2', action='store_true', help='modality-aware sampling with idle floor and mode balancing')
+    ap.add_argument('--mode-mix', type=json.loads, default=None, help='JSON object of mode sampling masses; default: frame shares')
+    ap.add_argument('--extra-data', default='')
+    ap.add_argument('--extra-shards', type=int, default=40, help='shard cap (1..40); final shard is always reserved for evaluation')
+    ap.add_argument('--extra-frac', type=float, default=0.15, help='extra-source batch fraction; future cats target: 0.15..0.20')
+    ap.add_argument('--holdout-episodes', type=int, default=0, help='reserve final N episodes of each shard for evaluation')
     return ap.parse_args()
 
 
@@ -125,12 +196,47 @@ def setup_distributed():
 
 def load_data(a, rank, world):
     paths = sorted(glob.glob(os.path.join(a.data, '*.npz')))
-    paths = paths[rank::world] if len(paths) >= world else paths
+    paths = partition_shards(paths, rank, world)
     t0 = time.time()
-    data = load_shards(paths, a.max_steps_data or None)
+    def windows(paths, seed, mode_mix=None):
+        data = load_training_shards(paths, a.max_steps_data or None, a.holdout_episodes)
+        return Windows(data, a.unroll, np.random.default_rng(seed), a.sampler_v2, mode_mix)
+    if a.mode_mix is not None and (not a.sampler_v2 or not isinstance(a.mode_mix, dict)):
+        raise ValueError('--mode-mix requires --sampler-v2 and a JSON object')
+    win = windows(paths, 1234 + rank, a.mode_mix)
     if rank == 0:
-        print(f'loaded {len(data["action"])} steps/rank from {len(paths)} shards in {time.time() - t0:.0f}s', flush=True)
-    return Windows(data, a.unroll, np.random.default_rng(1234 + rank))
+        print(f'loaded {len(win.d["action"])} steps/rank from {len(paths)} shards in {time.time() - t0:.0f}s', flush=True)
+    if a.extra_data:
+        if not 0 <= a.extra_frac <= 1 or not 1 <= a.extra_shards <= 40:
+            raise ValueError('extra fraction must be in [0,1] and shard cap in [1,40]')
+        extra = sorted(glob.glob(os.path.join(a.extra_data, '*.npz')))[:-1][:a.extra_shards]
+        extra = partition_shards(extra, rank, world)
+        win = MixedWindows(win, windows(extra, 5678 + rank), a.extra_frac)
+    return win
+
+
+def load_training_shards(paths, max_steps=None, holdout_episodes=0, heldout=False):
+    if holdout_episodes < 0:
+        raise ValueError('holdout episode count must be nonnegative')
+    parts, total = [], 0
+    for path in paths:
+        with np.load(path) as z:
+            lengths = z['ep_len']
+            if holdout_episodes >= len(lengths):
+                raise ValueError('holdout must leave at least one training episode per shard')
+            cut = len(lengths) - holdout_episodes
+            boundary = int(lengths[:cut].sum())
+            sl = slice(boundary, None) if heldout else slice(None, boundary)
+            part = {k: z[k][sl] for k in OBS_KEYS + ['action']}
+            part['ep_len'] = lengths[cut:] if heldout else lengths[:cut]
+            part['mode'] = np.full(len(part['action']), shard_mode(path))
+        parts.append(part)
+        total += len(part['action'])
+        if max_steps and total >= max_steps:
+            break
+    if not parts or not total:
+        raise ValueError('no eligible data shards or episodes')
+    return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
 
 
 def load_checkpoint(a):
@@ -185,7 +291,7 @@ def unroll_loss(fwd, model, b, a, p_ss, p_cor, gen, device, agg):
         total = total + loss / a.unroll
         prev_pred = out['grid'].detach().argmax(-1)
         for k, v in parts.items():
-            agg[k] = agg.get(k, 0) + float(v.detach()) / a.unroll
+            agg[k] = agg.get(k, 0) + (v.detach() if a.sync_fix else float(v.detach())) / a.unroll
     return total
 
 
@@ -251,9 +357,13 @@ def main():
         opt.step()
         if master and (it + 1) % a.log_every == 0:
             sps = a.log_every * a.batch * a.unroll * world / (time.time() - t_log)
-            parts = ' '.join(f'{k} {v / a.log_every:.4f}' for k, v in agg.items())
-            print(f'it {it + 1} loss {float(total):.4f} lr {lr:.2e} gn {float(gn):.2f} ss {p_ss:.2f} '
+            values = {k: float(v) / a.log_every for k, v in agg.items()}
+            loss, grad_norm = float(total.detach()), float(gn)
+            parts = ' '.join(f'{k} {v:.4f}' for k, v in values.items())
+            print(f'it {it + 1} loss {loss:.4f} lr {lr:.2e} gn {grad_norm:.2f} ss {p_ss:.2f} '
                   f'| {parts} | {sps:.0f} samples/s', flush=True)
+            append_metrics(a.out, dict(kind='train', it=it + 1, time=time.time(), loss=loss,
+                                       **values, lr=lr, grad_norm=grad_norm, ss_prob=p_ss, samples_per_sec=sps))
             agg, t_log = {}, time.time()
         if master and ((it + 1) % a.ckpt_every == 0 or it + 1 == end_it):
             save_checkpoint(a, model, opt, cfg, it + 1, b, amp)
