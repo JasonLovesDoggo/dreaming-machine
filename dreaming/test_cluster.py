@@ -400,3 +400,10 @@ def test_continuation_cfg_uses_saved_lock():
     assert row['it'] == 20000 and row['config']['phase_end'] == 65000 and row['config']['checkpoint_every'] == 1000
     with pytest.raises(ValueError):
         continuation_cfg('overnight-test', lock, 20000, 65500, 1000, 3600., 100.)
+
+
+def test_continuation_treats_null_end_as_active():
+    from dreaming.cluster import continuation_budget
+    records = _ledger()
+    records[-1]['end'] = None
+    assert continuation_budget(records, _ledger(), 20000, 20000, 20000, 9000., 1e9) is None

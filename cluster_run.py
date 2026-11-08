@@ -106,13 +106,18 @@ def continue_after(after_iter: int, end_iter: int, ckpt_every: int, stop_at: flo
         data.reload()
         if (out_dir / CONTINUED).exists():
             raise ValueError('controller already continued this run')
-        return continuation_budget(read(out_dir / 'ledger.json', []), snapshot,
-                                   read(out_dir / 'run.json', {'iter': -1})['iter'],
-                                   read(Path(f'/vol/runs/{RUN_ID}/run.json'), {'iter': -1})['iter'],
-                                   after_iter, time.time(), stop_at)
+        records = read(out_dir / 'ledger.json', [])
+        out_iter = read(out_dir / 'run.json', {'iter': -1})['iter']
+        published = read(Path(f'/vol/runs/{RUN_ID}/run.json'), {'iter': -1})['iter']
+        print(json.dumps(dict(event='poll', time=time.time(), out_iter=out_iter, published_iter=published,
+                              active_ended=bool(records) and records[-1].get('end') is not None)), flush=True)
+        return continuation_budget(records, snapshot, out_iter, published, after_iter, time.time(), stop_at)
 
     out.reload()
     snapshot = read(out_dir / 'ledger.json', [])
+    print(json.dumps(dict(event='controller_start', run_id=RUN_ID, after_iter=after_iter, end_iter=end_iter,
+                          ckpt_every=ckpt_every, stop_at=stop_at, wait_seconds=wait_seconds, ledger=snapshot,
+                          out_iter=read(out_dir / 'run.json', {'iter': -1})['iter'])), flush=True)
     while budget() is None:
         if time.time() - started > wait_seconds:
             raise TimeoutError(f'iteration {after_iter} not completed and published within {wait_seconds}s')

@@ -255,11 +255,11 @@ def continuation_budget(records, snapshot, out_iter, published_iter, after_iter,
     """Seconds for the single continuation, or None while the boundary run is still finishing."""
     if not snapshot or [(r['start'], r['deadline']) for r in records] != [(r['start'], r['deadline']) for r in snapshot]:
         raise ValueError('ledger changed since controller start: refusing duplicate continuation')
-    if any('end' not in r for r in records[:-1]):
+    if any(r.get('end') is None for r in records[:-1]):
         raise ValueError('earlier ledger entry never ended')
     if out_iter > after_iter or published_iter > after_iter:
         raise ValueError('run already advanced past the continuation boundary')
-    if 'end' not in records[-1] or out_iter < after_iter or published_iter < after_iter:
+    if records[-1].get('end') is None or out_iter < after_iter or published_iter < after_iter:
         return None
     used = sum(r['end'] - r['start'] for r in records)
     budget = min(total_cap_hours * 3600 - used, stop_at - now, 8 * 3600) - 1
