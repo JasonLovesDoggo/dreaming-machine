@@ -87,6 +87,7 @@ class _Parsed:
     last_it: int | None = None
     config: dict = field(default_factory=dict)
     config_it: int | None = None
+    config_field_it: dict = field(default_factory=dict)
     config_rejected: list = field(default_factory=list)
     sps: list = field(default_factory=list)
     update_secs: list = field(default_factory=list)
@@ -162,9 +163,13 @@ class _Parsed:
             self.skipped += 1
             return
         it, _ = _num(row.get('it'))
+        # Per field, the row describing the latest iteration wins (file order breaks ties), so an older
+        # sidecar row merged after a newer one cannot revert phase/cadence while fields only it carries survive.
+        rank = -1 if it is None else it
         for k, (low, integer) in CONFIG_FIELDS.items():
-            if k not in cfg:
+            if k not in cfg or rank < self.config_field_it.get(k, -1):
                 continue
+            self.config_field_it[k] = rank
             value, _ = _num(cfg[k])
             if value is None or value < low or (integer and value != int(value)):
                 if k not in self.config_rejected:
@@ -172,7 +177,8 @@ class _Parsed:
                 self.config.pop(k, None)
                 continue
             self.config[k] = int(value) if integer else value
-        self.config_it = int(it) if it is not None else self.config_it
+        if it is not None and (self.config_it is None or it > self.config_it):
+            self.config_it = int(it)
 
     def _eval_note(self, it, key, value):
         """Protocol/provenance metadata next to the per-app results, e.g. eval_protocol, idle, eval_decode_commit."""
