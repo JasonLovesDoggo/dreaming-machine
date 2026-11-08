@@ -8,7 +8,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import JSONResponse
 from ..dataset import OBS_KEYS
-from ..os_sim import APPS, obs_to_pixels
+from ..os_sim import APP_SLOTS, FOCUS_COL, obs_to_pixels
 from .settings import SETTINGS
 
 router = APIRouter(prefix='/data')
@@ -53,8 +53,8 @@ def shard(name: str):
 
 
 def _focus(state):
-    f = int(state[3 * len(APPS)])
-    return APPS[f - 1] if f else 'desktop'
+    f = int(state[FOCUS_COL])
+    return APP_SLOTS[f - 1] if f else 'desktop'
 
 
 @router.get('/clip')

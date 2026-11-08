@@ -4,10 +4,9 @@ import glob
 import json
 import numpy as np
 
-from .os_sim import APPS
+from .os_sim import APP_SLOTS, FOCUS_COL
 
-FOCUS = ['desktop'] + list(APPS)
-FOCUS_COL = 3 * len(APPS)
+FOCUS = ['desktop'] + list(APP_SLOTS)
 
 
 def shard_stats(path, k=6):

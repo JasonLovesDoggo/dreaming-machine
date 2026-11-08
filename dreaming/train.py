@@ -13,7 +13,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from .dataset import load_shards, OBS_KEYS
 from .model import WorldModel, Config, compute_loss, decode
-from .tiles import VOCAB, PAL
+from .tiles import VOCAB, PAL, ATLAS
 
 
 class Windows:
@@ -168,6 +168,7 @@ def start_loader(win, batch, n_threads=2):
 def unroll_loss(fwd, model, b, a, p_ss, p_cor, gen, device, agg):
     """Run the recurrent unroll with scheduled sampling + input corruption on the grid; returns mean loss."""
     B = b['grid'].shape[0]
+    used = torch.as_tensor(ATLAS.used, device=device)
     mem, total, prev_pred = model.init_memory(B), 0, None
     for i in range(a.unroll):
         g_in = b['grid'][:, i]
@@ -177,7 +178,7 @@ def unroll_loss(fwd, model, b, a, p_ss, p_cor, gen, device, agg):
         if p_cor > 0:
             rate = p_cor * torch.rand(B, 1, device=device, generator=gen)
             noise = torch.rand(g_in.shape, device=device, generator=gen) < rate
-            g_in = torch.where(noise, torch.randint(0, VOCAB, g_in.shape, device=device, generator=gen), g_in)
+            g_in = torch.where(noise, used[torch.randint(0, len(used), g_in.shape, device=device, generator=gen)], g_in)
         out, mem = fwd(step_inputs(b, i, g_in), mem)
         loss, parts = compute_loss(out, step_targets(b, i), b['grid'][:, i])
         total = total + loss / a.unroll

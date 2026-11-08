@@ -91,23 +91,53 @@ MINI_ART = {
 }
 
 
+# Stable tile-ID layout: every section owns a fixed ID range with spare room, so adding icons, apps or text
+# styles never renumbers existing tiles. Append new entries at the END of their section (or a reserved one).
+SECTIONS = {
+    'core': (0, 512), 'icon': (512, 512), 'mini': (1024, 256),
+    'app_calculator': (1280, 256), 'app_terminal': (1536, 256), 'app_dreamer': (1792, 256),
+    'app_flight': (2048, 256), 'app_spare': (2304, 1792),
+    'canvas': (4096, 4096), 'text': (8192, 12 * 2048),
+}
+TEXT_STRIDE, TEXT_SLOTS = 2048, 12
+VOCAB_SIZE = sum(SECTIONS['text'])
+
+
 class Atlas:
     def __init__(self):
-        self.tiles = []
+        self.tiles = {}
         self.ids = {}
         self.ranges = {}
+        self.cursor = self.end = 0
+
+    def section(self, name):
+        base, cap = SECTIONS[name]
+        self.cursor, self.end, self.sec = base, base + cap, (name, base)
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        name, base = self.sec
+        if self.cursor > base:
+            self.ranges[(name,)] = (base, self.cursor)
 
     def add(self, key, arr):
         assert key not in self.ids, key
-        self.ids[key] = len(self.tiles)
-        self.tiles.append(np.asarray(arr, np.uint8))
+        assert self.cursor < self.end, f'section {self.sec[0]} is full'
+        self.ids[key] = self.cursor
+        self.tiles[self.cursor] = np.asarray(arr, np.uint8)
+        self.cursor += 1
         return self.ids[key]
 
-    def add_block(self, name, arrs):
-        start = len(self.tiles)
-        self.tiles.extend(list(arrs))
-        self.ranges[name] = (start, len(self.tiles))
-        return start
+    def add_block(self, name, arrs, base, cap):
+        arrs = list(arrs)
+        assert len(arrs) <= cap, name
+        for i, a in enumerate(arrs):
+            self.tiles[base + i] = a
+        self.ranges[name] = (base, base + len(arrs))
+        return base
 
     def __getitem__(self, key):
         return self.ids[key]
@@ -145,6 +175,7 @@ def draw_mask(t, mask, color, oy, ox):
 
 def build_atlas():
     A = Atlas()
+    A.section('core')
     for name, c in [('desk', TEAL), ('body', WHITE), ('title', NAVY), ('title_in', DGRAY), ('tool', LGRAY),
                     ('felt', DGREEN), ('hud', K), ('sel', BLUE)]:
         A.add(('solid', name), solid(c))
@@ -157,13 +188,19 @@ def build_atlas():
         t = solid(RED if active else DGRAY)
         draw_mask(t, GLYPHS[CHAR_IDX['X']], WHITE, 1, 2)
         A.add(('close', active), t)
+    A.__exit__()
+    A.section('icon')
     for name, art in ICON_ART.items():
         for q in range(4):
             qy, qx = divmod(q, 2)
             A.add(('icon', name, q), art_tile(art, TEAL, qy * T, qx * T))
+    A.__exit__()
+    A.section('mini')
     for name, art in MINI_ART.items():
         for sel in (False, True):
             A.add(('mini', name, sel), art_tile(art, BLUE if sel else WHITE))
+    A.__exit__()
+    A.section('core').cursor = A.ranges[('core',)][1]
     for i, c in enumerate(CANVAS_COLORS):
         for sel in (False, True):
             t = solid(LGRAY)
@@ -203,29 +240,34 @@ def build_atlas():
         A.add(('back', sides), with_edges(back, sides.replace('m', ''), K))
     for sides in ['tl', 'tr', 'ml', 'mr', 'bl', 'br']:
         A.add(('slot', sides), with_edges(solid(DGREEN), sides.replace('m', ''), GREEN))
-    n_static = len(A.tiles)
+    A.__exit__()
+    n_static = A.ranges[('core',)][1]
     # text: char pairs per context
-    for ctx, (fg, bg) in TEXT_CTX.items():
+    assert len(TEXT_CTX) <= TEXT_SLOTS and NCH * NCH <= TEXT_STRIDE
+    for slot, (ctx, (fg, bg)) in enumerate(TEXT_CTX.items()):
         arr = np.full((NCH, NCH, T, T), bg, np.uint8)
         ga = np.where(GLYPHS[:, None], fg, bg)
         gb = np.where(GLYPHS[None, :], fg, bg)
         arr[:, :, 1:6, 0:3] = ga
         arr[:, :, 1:6, 4:7] = gb
-        A.add_block(('text', ctx), arr.reshape(-1, T, T))
+        A.add_block(('text', ctx), arr.reshape(-1, T, T), SECTIONS['text'][0] + slot * TEXT_STRIDE, TEXT_STRIDE)
     # paint canvas: 2x2 cells of 4x4 px, 8 colors
     codes = np.arange(8 ** 4)
     cv = np.zeros((len(codes), T, T), np.uint8)
     pal = np.array(CANVAS_COLORS, np.uint8)
     for i, (dy, dx) in enumerate([(0, 0), (0, 1), (1, 0), (1, 1)]):
         cv[:, dy * 4:dy * 4 + 4, dx * 4:dx * 4 + 4] = pal[(codes >> (3 * i)) & 7][:, None, None]
-    A.add_block(('canvas',), cv)
+    A.add_block(('canvas',), cv, *SECTIONS['canvas'])
     A.n_static = n_static
-    A.array = np.stack(A.tiles)
+    A.array = np.zeros((VOCAB_SIZE, T, T), np.uint8)
+    for i, t in A.tiles.items():
+        A.array[i] = t
+    A.used = np.array(sorted(A.tiles), np.int64)
     return A
 
 
 ATLAS = build_atlas()
-VOCAB = len(ATLAS.tiles)
+VOCAB = VOCAB_SIZE
 TEXT_START = {ctx: ATLAS.ranges[('text', ctx)][0] for ctx in CTX_NAMES}
 CANVAS_START = ATLAS.ranges[('canvas',)][0]
 

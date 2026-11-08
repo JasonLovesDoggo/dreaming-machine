@@ -32,7 +32,7 @@ def index():
 
 @router.get('/sheet')
 def sheet(start: int, n: int):
-    tiles = ATLAS.tiles[start:start + min(n, MAX_SHOWN)]
+    tiles = ATLAS.array[start:start + min(n, MAX_SHOWN)]
     rows = (len(tiles) + SHEET_COLS - 1) // SHEET_COLS
     px = np.zeros((rows * T, SHEET_COLS * T), np.uint8)
     for i, tile in enumerate(tiles):

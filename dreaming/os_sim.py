@@ -9,6 +9,11 @@ from . import pictures as pics
 
 APP_SIZES = {'explorer': (16, 12), 'paint': (18, 13), 'cards': (23, 20), 'doom': (22, 18), 'notepad': (18, 13)}
 APPS = list(APP_SIZES)
+# Fixed OS-state slots: existing apps keep their slot forever; new apps take a reserved one (never reorder).
+APP_SLOTS = ['explorer', 'paint', 'cards', 'doom', 'notepad', 'calculator', 'terminal', 'dreamer', 'flight', 'spare']
+assert all(a in APP_SLOTS for a in APPS)
+FOCUS_COL = 3 * len(APP_SLOTS)
+EXT_FIELDS, EXT_VOCAB = 16, 32  # spare per-app state fields at the end of the state vector
 APP_TITLES = {'explorer': 'FILES', 'paint': 'PAINT', 'cards': 'CARDS', 'doom': 'DOOM', 'notepad': 'NOTEPAD'}
 DEFAULT_POS = {'explorer': (12, 2), 'paint': (11, 4), 'cards': (8, 1), 'doom': (9, 3), 'notepad': (7, 6)}
 KEY_NONE, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_FIRE, KEY_ENTER, KEY_ESC, KEY_DEL = range(9)
@@ -779,12 +784,16 @@ class MicroOS:
         return dict(grid=grid, cursor=np.array([self.mx, self.my], np.uint8), doom_cols=cols, doom_spr=spr,
                     doom_meta=meta, state=self.state_vector(), events=events)
 
+    def ext_state_fields(self):
+        """Spare state fields for new apps; each app claims a fixed sub-range and leaves the rest zero."""
+        return [0] * EXT_FIELDS
+
     def state_vector(self):
         f = []
-        for app in APPS:
+        for app in APP_SLOTS:
             c, r = self.pos.get(app, (0, 0))
             f += [int(app in self.z), c, r]
-        f.append(APPS.index(self.focus) + 1 if self.focus else 0)
+        f.append(APP_SLOTS.index(self.focus) + 1 if self.focus else 0)
         f.append(int(self.drag is not None))
         f.append(self.btn)
         f.append(min(self.t - self.last_press_t, 9))
@@ -796,11 +805,12 @@ class MicroOS:
         f += [int(self.c_dragging), min(len(self.np_text) // 16, 31), int(self.np_file is not None)]
         f += [int(self.ex_naming is not None), len(self.ex_naming or '') // 3, self.pt_load]
         f += self.doom.state_fields() if 'doom' in self.z else [0] * 6
+        f += self.ext_state_fields()
         return np.array(f, np.uint8)
 
 
-STATE_VOCAB = [2, 32, 24] * 5 + [6, 2, 2, 10, 8, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
-                                 2, 8, 11, 16, 12, 16, 11, 11, 10]
+STATE_VOCAB = [2, 32, 24] * len(APP_SLOTS) + [len(APP_SLOTS) + 1, 2, 2, 10, 8, 5, 10, 10, 10, 8, 2, 2, 13, 13, 14, 14, 14, 14, 3, 8, 2, 32, 2,
+                                 2, 8, 11, 16, 12, 16, 11, 11, 10] + [EXT_VOCAB] * EXT_FIELDS
 
 
 @lru_cache(maxsize=65536)
