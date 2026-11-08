@@ -7,6 +7,7 @@
 </head>
 <body>
   <h2>Dreaming Computer: training data viewer</h2>
+  dataset <select id="dataset" aria-label="dataset"></select>
   shard <select id="shard"></select>
   episode <select id="episode"></select>
   <button id="play">play</button>
@@ -14,6 +15,7 @@
   <button id="random">random spot</button><br>
   <input id="scrub" type="range" min="0" value="0"><br>
   <span id="info"></span><br>
+  <span id="status" role="status"></span> <button id="retry" hidden>retry</button><br>
   <canvas id="frame" class="pixel" width="256" height="192"></canvas>
   <footer><a href=".">play the computer</a> &middot; <a href="sprites">tile &amp; sprite atlas</a> &middot; <a href="training">training metrics</a></footer>
   <script src="static/telemetry.js"></script>

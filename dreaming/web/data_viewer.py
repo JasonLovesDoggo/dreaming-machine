@@ -3,6 +3,7 @@ import functools
 import glob
 import json
 import os
+import re
 import time
 import numpy as np
 from fastapi import APIRouter, HTTPException, Response
@@ -16,40 +17,67 @@ MAX_CLIP = 128
 INDEX_TTL = 60
 
 
-def _path(name):
-    path = os.path.join(SETTINGS.data_dir, os.path.basename(name) + '.npz')
+def _root(dataset):
+    root = os.path.normpath(SETTINGS.data_dir)
+    roots = {'main': root, 'cats_dense_v1': root + '_cats_dense_v1', 'llm': root + '_llm'}
+    if dataset not in roots:
+        raise HTTPException(400, 'unknown dataset')
+    return roots[dataset]
+
+
+def _path(dataset, name):
+    root = _root(dataset)
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name) or '..' in name:
+        raise HTTPException(400, 'invalid shard name')
+    path = os.path.join(root, name + '.npz')
     if not os.path.exists(path):
         raise HTTPException(404, 'no such shard')
     return path
 
 
 @functools.lru_cache(maxsize=4)
-def _shard(name):
-    with np.load(_path(name)) as z:
+def _shard(dataset, name):
+    with np.load(_path(dataset, name)) as z:
         return {k: z[k] for k in z.files}
 
 
-_index = {'t': 0.0, 'names': []}
+_index: dict = {}
+
+
+def _listing(dataset):
+    root = _root(dataset)
+    key = (dataset, root)
+    if key not in _index or time.time() - _index[key]['t'] > INDEX_TTL:
+        _index[key] = dict(t=time.time(), names=sorted(
+            os.path.basename(p)[:-4] for p in glob.glob(os.path.join(root, '*.npz'))))
+    return _index[key]['names']
+
+
+@router.get('/datasets')
+def datasets():
+    return JSONResponse([dict(id=d, dir=os.path.basename(_root(d)), path=_root(d),
+                              available=os.path.isdir(_root(d)), shards=len(_listing(d)))
+                         for d in ('main', 'cats_dense_v1', 'llm')])
 
 
 @router.get('/index')
-def index():
+def index(dataset: str = 'main'):
     """Shard names only (cheap glob, cached); episode lengths come from /data/shard on demand."""
-    if time.time() - _index['t'] > INDEX_TTL:
-        _index['names'] = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(SETTINGS.data_dir, '*.npz')))
-        _index['t'] = time.time()
-    return JSONResponse(dict(dir=SETTINGS.data_dir, shards=_index['names']))
+    root = _root(dataset)
+    return JSONResponse(dict(dir=root, shards=_listing(dataset), dataset=dataset, available=os.path.isdir(root)))
 
 
 @functools.lru_cache(maxsize=4096)
-def _ep_len(name):
-    with np.load(_path(name)) as z:
+def _ep_len(dataset, name):
+    with np.load(_path(dataset, name)) as z:
         return z['ep_len'].tolist()
 
 
 @router.get('/shard')
-def shard(name: str):
-    return JSONResponse(dict(name=name, ep_len=_ep_len(name)))
+def shard(name: str, dataset: str = 'main'):
+    lengths = _ep_len(dataset, name)
+    return JSONResponse(dict(name=name, ep_len=lengths, dataset=dataset,
+                             frames=sum(lengths), episodes=len(lengths)))
 
 
 def _focus(state):
@@ -58,9 +86,9 @@ def _focus(state):
 
 
 @router.get('/clip')
-def clip(shard: str, start: int, n: int = 32):
+def clip(shard: str, start: int, n: int = 32, dataset: str = 'main'):
     """n consecutive frames as raw 256x192 palette indices (uint8), plus per-frame focus/action in x-meta."""
-    d = _shard(shard)
+    d = _shard(dataset, shard)
     start = max(0, min(start, len(d['grid']) - 1))
     stop = min(len(d['grid']), start + max(1, min(n, MAX_CLIP)))
     frames, meta = [], []
