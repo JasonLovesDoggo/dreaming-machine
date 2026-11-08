@@ -32,7 +32,7 @@
     async fetch() {
       byId('refresh').disabled = true;
       byId('status').textContent = lastUpdated ? 'Refreshing aggregates…' : 'Loading analytics…';
-      const response = await fetch('/telemetry/summary', {cache: 'no-store'});
+      const response = await fetch('telemetry/summary', {cache: 'no-store'});
       if (!response.ok) throw new Error('Summary request failed');
       const data = await response.json();
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid summary');
